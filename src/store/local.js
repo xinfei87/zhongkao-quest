@@ -1,0 +1,87 @@
+/**
+ * 存档：LocalStorage 读写 + 结构迁移。
+ * 所有学习进度都在这里，约几十 KB，天然可导出。
+ */
+import { dayKey } from '../util.js';
+
+const KEY = 'zkq_state_v1';
+
+export function defaultState() {
+  return {
+    version: 1,
+    createdAt: dayKey(),
+    profile: { name: '', pin: '1234', dailyQuestions: 4 },
+    streak: { days: 0, lastDate: '', best: 0 },
+    points: 0,
+    sessions: [],           // {date, subject, minutes, correct, total, points}
+    today: null,            // {date, subject, done:boolean}
+    subjectCursor: 0,       // 「换一关」轮换位置
+    focus: {},              // subject -> topicId
+    topicStats: {},         // topicId -> {seen, correct, wrongStreak, shaky, mastered, lastSeen}
+    wrongBook: [],          // {questionId, topicId, subject, count, lastWrong, status}
+    flashcards: {},         // topicId -> {box, due}
+    rewards: [
+      { id: 'r1', title: '周末多玩 30 分钟游戏', cost: 120 },
+      { id: 'r2', title: '选一部电影全家一起看', cost: 200 },
+      { id: 'r3', title: '买一本想要的书', cost: 300 },
+    ],
+    redemptions: [],        // {id, rewardId, title, cost, date}
+    labBonus: {},           // labId -> date（每天只能拿一次）
+    settings: { sound: false, showTimer: true },
+  };
+}
+
+function merge(base, saved) {
+  const out = { ...base, ...saved };
+  out.profile = { ...base.profile, ...(saved.profile || {}) };
+  out.streak = { ...base.streak, ...(saved.streak || {}) };
+  out.settings = { ...base.settings, ...(saved.settings || {}) };
+  if (!Array.isArray(out.wrongBook)) out.wrongBook = [];
+  if (!Array.isArray(out.sessions)) out.sessions = [];
+  if (!Array.isArray(out.rewards)) out.rewards = base.rewards;
+  if (!Array.isArray(out.redemptions)) out.redemptions = [];
+  if (typeof out.points !== 'number') out.points = 0;
+  return out;
+}
+
+let cache = null;
+
+export function loadState() {
+  if (cache) return cache;
+  const base = defaultState();
+  try {
+    const raw = localStorage.getItem(KEY);
+    cache = raw ? merge(base, JSON.parse(raw)) : base;
+  } catch {
+    cache = base;
+  }
+  return cache;
+}
+
+export function saveState(state = cache) {
+  cache = state;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch (e) {
+    console.warn('存档失败（可能空间已满）', e);
+  }
+}
+
+export function replaceState(next) {
+  cache = merge(defaultState(), next);
+  saveState(cache);
+  return cache;
+}
+
+export function exportState() {
+  return JSON.stringify(loadState());
+}
+
+/** 清空进度，保留家长设置里的 PIN */
+export function resetProgress() {
+  const pin = loadState().profile.pin;
+  cache = defaultState();
+  cache.profile.pin = pin;
+  saveState(cache);
+  return cache;
+}

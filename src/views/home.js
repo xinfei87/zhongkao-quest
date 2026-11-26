@@ -1,0 +1,55 @@
+import { dayKey, esc } from '../util.js';
+import { pickSubject, weekStats } from '../engine/scheduler.js';
+
+export function renderHome(app, root) {
+  const s = app.state;
+  const subject = pickSubject(app.index.subjects, s);
+  if (!subject) {
+    root.innerHTML = '<p class="hint">题库为空。</p>';
+    return;
+  }
+  const today = dayKey();
+  const done = s.today?.date === today && s.today.done;
+  const wrongCount = (s.wrongBook || []).filter((w) => w.status !== 'cleared').length;
+  const week = weekStats(s, 7);
+
+  root.innerHTML = `
+    <section class="card hero">
+      <span class="hero-subject">${esc(subject.name)} · ${done ? '今天已完成' : '基础巩固'}</span>
+      <h1>${done ? '今天已经打过卡了' : '开始今日一关'}</h1>
+      <p class="meta">${done ? '想再练一轮也完全可以' : '约 10 分钟 · 4 道题 · 第 1 题一定做得出来'}</p>
+      <button class="btn btn-primary" id="start">${done ? '再来一关' : '开始今日一关（约 10 分钟）'}</button>
+    </section>
+
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn btn-sm" id="swap">换一关</button>
+      <button class="btn btn-sm" id="chapters">自选章节</button>
+      <button class="btn btn-sm" id="wrong">错题回炉${wrongCount ? `（${wrongCount}）` : ''}</button>
+    </div>
+
+    <h2 class="sec-title">这 7 天</h2>
+    <div class="grid-3">
+      <div class="stat"><b>${week.days}</b><span>练习天数</span></div>
+      <div class="stat"><b>${week.minutes}</b><span>分钟</span></div>
+      <div class="stat"><b>${week.rate}%</b><span>正确率</span></div>
+    </div>
+
+    <h2 class="sec-title">题库范围</h2>
+    <div class="card">
+      ${app.index.subjects.map((x) => `
+        <div class="row">
+          <div class="row-main">
+            <div class="row-title">${esc(x.name)}</div>
+            <div class="row-sub">${x.topicCount} 个考点 · 其中基础题 ${x.basicCount} 道</div>
+          </div>
+          <span class="chip">${x.questionCount} 题</span>
+        </div>`).join('')}
+      <p class="hint" style="margin-top:12px">共 ${app.index.totalTopics} 个考点、${app.index.totalQuestions} 道题，全部来自开源知识图谱与题库，可按章节自由选择。</p>
+    </div>
+  `;
+
+  root.querySelector('#start').onclick = () => app.startSession({ subjectId: subject.id });
+  root.querySelector('#swap').onclick = () => app.switchSubject();
+  root.querySelector('#chapters').onclick = () => app.go('chapters');
+  root.querySelector('#wrong').onclick = () => app.startWrongReview();
+}

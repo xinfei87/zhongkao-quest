@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#F8FAFC" />
+<title>每日一关 · 初三基础闯关</title>
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="stylesheet" href="./assets/app.css" />
+</head>
+<body>
+<div id="app" class="app">
+  <header class="topbar" id="topbar"></header>
+  <main id="view" class="view" aria-live="polite"></main>
+  <nav class="tabbar" id="tabbar" hidden>
+    <a href="#/home" data-tab="home"><span class="tab-ico">◆</span><span>今日</span></a>
+    <a href="#/labs" data-tab="labs"><span class="tab-ico">⚗</span><span>实验室</span></a>
+    <a href="#/me" data-tab="me"><span class="tab-ico">☺</span><span>我的</span></a>
+  </nav>
+</div>
+<dialog id="sheet" class="sheet"></dialog>
+<div id="toast" class="toast" role="status"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

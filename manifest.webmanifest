@@ -1,0 +1,20 @@
+{
+  "name": "每日一关 · 初三基础闯关",
+  "short_name": "每日一关",
+  "description": "每天 10 分钟，抓牢中考基础分的手机/平板学习应用",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F8FAFC",
+  "theme_color": "#F8FAFC",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
