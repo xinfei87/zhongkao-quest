@@ -2,19 +2,32 @@
  * 家长看板 / 老师只读查看共用的看板模块（V2）。
  * 家长端和老师端渲染的是同一套内容、同一套算法，不会算出两套数字。
  * 这里只算数、不改数、不写 localStorage；所有数字都从现有 state
- *（topicStats / wrongBook / sessions / teacherAsks / hintLog）里算，不编造。
+ *（topicStats / wrongBook / sessions / daily / teacherAsks / hintLog）里算，不编造。
  */
 import { esc, dayKey, addDays } from '../util.js';
 import { topWeakTopics } from '../engine/scheduler.js';
 
-/** 今日完成情况：是否打卡、练了哪科、几题、几分钟（对照目标）、正确率 */
+/** 今日完成情况：是否打卡、练了哪科、几题、几分钟（对照目标）、正确率
+ * V2.2：题数/正确率/分钟以 daily 为准——每次真实作答都累计，中途退出也计入今日；
+ * 做完一整关的题已经在 daily 里了，不再另加 sessions。
+ * “打卡”仍以 completeSession 为准：做完一整关才打卡，中途退出只计题数、不算打卡。 */
 export function computeToday(state, subjects = []) {
   const today = dayKey();
-  const list = (state.sessions || []).filter((x) => x.date === today);
-  const total = list.reduce((a, x) => a + (x.total || 0), 0);
-  const correct = list.reduce((a, x) => a + (x.correct || 0), 0);
-  const minutes = list.reduce((a, x) => a + (x.minutes || 0), 0);
-  const subjectId = state.today?.date === today ? state.today.subject : (list[0]?.subject || '');
+  const d = state.daily;
+  let total, correct, minutes, subjectId;
+  if (d && d.date === today) {
+    total = d.total || 0;
+    correct = d.correct || 0;
+    minutes = d.minutes || 0;
+    subjectId = d.subject || '';
+  } else {
+    // 旧数据回落：没有 daily 字段时按 sessions 算（现状行为）
+    const list = (state.sessions || []).filter((x) => x.date === today);
+    total = list.reduce((a, x) => a + (x.total || 0), 0);
+    correct = list.reduce((a, x) => a + (x.correct || 0), 0);
+    minutes = list.reduce((a, x) => a + (x.minutes || 0), 0);
+    subjectId = state.today?.date === today ? state.today.subject : (list[0]?.subject || '');
+  }
   const subjectName = (subjects.find((x) => x.id === subjectId) || {}).name || (subjectId || '还没练');
   return {
     done: Boolean(state.today?.date === today && state.today.done),
@@ -122,14 +135,23 @@ export function weakTopHTML(items) {
     </div>`).join('');
 }
 
-/** 最近 7 天正确率趋势（按日期聚合 sessions） */
+/** 最近 7 天正确率趋势
+ * V2.2：今天用 daily（含中途退出的题），不再加今天的 sessions，防双倍；
+ * 往日只有整关记录，用 sessions。 */
 export function computeTrend(state, days = 7) {
   const out = [];
+  const today = dayKey();
   for (let i = days - 1; i >= 0; i--) {
-    const d = addDays(dayKey(), -i);
-    const list = (state.sessions || []).filter((x) => x.date === d);
-    const total = list.reduce((a, x) => a + (x.total || 0), 0);
-    const correct = list.reduce((a, x) => a + (x.correct || 0), 0);
+    const d = addDays(today, -i);
+    let total, correct;
+    if (d === today && state.daily && state.daily.date === today) {
+      total = state.daily.total || 0;
+      correct = state.daily.correct || 0;
+    } else {
+      const list = (state.sessions || []).filter((x) => x.date === d);
+      total = list.reduce((a, x) => a + (x.total || 0), 0);
+      correct = list.reduce((a, x) => a + (x.correct || 0), 0);
+    }
     out.push({ date: d.slice(5), total, rate: total ? Math.round((correct / total) * 100) : null });
   }
   return out;

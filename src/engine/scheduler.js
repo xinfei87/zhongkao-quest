@@ -167,6 +167,24 @@ export function markAnsweredOnce(answeredIds, questionId) {
   return true;
 }
 
+/** V2.2 今日累计：每天真实作答的汇总（中途退出也计）。
+ * 形状 {date, total, correct, minutes, subject}；跨天自动清零重计。
+ * 注意：做完一整关的题已经在这里了，所以周统计/趋势里“今天”只用 daily，
+ * 不再加今天的 sessions，否则同一关会被算两次。 */
+export function ensureDaily(state, date = dayKey()) {
+  if (!state.daily || state.daily.date !== date) {
+    state.daily = { date, total: 0, correct: 0, minutes: 0, subject: '' };
+  }
+  return state.daily;
+}
+
+/** V2.2：本次用时记进今日分钟（退出或收关时调一次；只记一次的守卫在做题页，不在这里）。 */
+export function addDailyMinutes(state, minutes, date = dayKey()) {
+  const d = ensureDaily(state, date);
+  d.minutes += minutes || 0;
+  return d.minutes;
+}
+
 /** 记一道题的结果，返回本次获得的积分 */
 export function recordAnswer(state, { subject, question, correct, firstTry = true, myAnswer = '', date = dayKey() }) {
   const st = (state.topicStats[question.topicId] ||= {
@@ -182,6 +200,13 @@ export function recordAnswer(state, { subject, question, correct, firstTry = tru
     st.wrongStreak = (st.wrongStreak || 0) + 1;
     st.mastered = false;
   }
+
+  // V2.2：每次真实作答都计入今日（回看路径不调 recordAnswer，所以不会重复算；
+  // 变式题传的是原题 id，一道变式也只算一道）。
+  const d = ensureDaily(state, date);
+  d.total += 1;
+  if (correct) d.correct += 1;
+  d.subject = subject;
 
   const existing = (state.wrongBook || []).find((w) => w.questionId === question.id);
   if (!correct) {
@@ -256,14 +281,33 @@ export function completeSession(state, { subject, minutes, correct, total, point
   return bonus;
 }
 
-/** 最近 n 天统计（家长端） */
+/** 最近 n 天统计（家长端）
+ * V2.2 合并口径：今天用 daily（已含今天所有作答，包括已收关的），不再加今天的
+ * sessions——否则同一关算两次；往日只有整关记录，用 sessions（往日中途退出的
+ * 零散题没有留存，只在当天计）。days 是有练习的天数（去重后的日期数）。 */
 export function weekStats(state, days = 7) {
-  const from = addDays(dayKey(), -(days - 1));
-  const list = (state.sessions || []).filter((s) => s.date >= from);
-  const minutes = list.reduce((a, s) => a + (s.minutes || 0), 0);
-  const total = list.reduce((a, s) => a + (s.total || 0), 0);
-  const correct = list.reduce((a, s) => a + (s.correct || 0), 0);
-  return { days: list.length, minutes, total, correct, rate: total ? Math.round((correct / total) * 100) : 0 };
+  const today = dayKey();
+  const from = addDays(today, -(days - 1));
+  const past = (state.sessions || []).filter((s) => s.date >= from && s.date < today);
+  let minutes = past.reduce((a, s) => a + (s.minutes || 0), 0);
+  let total = past.reduce((a, s) => a + (s.total || 0), 0);
+  let correct = past.reduce((a, s) => a + (s.correct || 0), 0);
+  const activeDays = new Set(past.map((s) => s.date));
+  const d = state.daily;
+  if (d && d.date === today) {
+    minutes += d.minutes || 0;
+    total += d.total || 0;
+    correct += d.correct || 0;
+    if ((d.total || 0) > 0) activeDays.add(today);
+  } else {
+    // 旧数据回落：没有 daily 时今天仍按 sessions 算
+    const tlist = (state.sessions || []).filter((s) => s.date === today);
+    minutes += tlist.reduce((a, s) => a + (s.minutes || 0), 0);
+    total += tlist.reduce((a, s) => a + (s.total || 0), 0);
+    correct += tlist.reduce((a, s) => a + (s.correct || 0), 0);
+    if (tlist.length) activeDays.add(today);
+  }
+  return { days: activeDays.size, minutes, total, correct, rate: total ? Math.round((correct / total) * 100) : 0 };
 }
 
 /** 根因 Top N：按错题所属考点聚合 */

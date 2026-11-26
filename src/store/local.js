@@ -14,6 +14,7 @@ export function defaultState() {
     streak: { days: 0, lastDate: '', best: 0 },
     points: 0,
     sessions: [],           // {date, subject, minutes, correct, total, points}
+    daily: null,            // V2.2 当天累计 {date, total, correct, minutes, subject}（中途退出也计）
     today: null,            // {date, subject, done:boolean}
     subjectCursor: 0,       // 「换一关」轮换位置
     focus: {},              // {subject, grade, topic} 本关主攻（首页显示用）

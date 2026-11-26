@@ -1,6 +1,6 @@
 import { esc, toast, openSheet, closeSheet, vibrate, dayKey } from '../util.js';
 import { judge, inputCount } from '../engine/judge.js';
-import { groupByTopic, recordAnswer, recordFlashcard, markShaky, completeSession, markAnsweredOnce } from '../engine/scheduler.js';
+import { groupByTopic, recordAnswer, recordFlashcard, markShaky, completeSession, markAnsweredOnce, addDailyMinutes } from '../engine/scheduler.js';
 import { pickConfirmQuestion, pickVariantQuestion, diagnose } from '../engine/backtrack.js';
 import { buildHintLevels, HINT_LEVELS } from '../engine/hints.js';
 import { askTeacher, hasTeacherKey, readTeacherCache, TEACHER_KEY_URL } from '../engine/teacher.js';
@@ -115,6 +115,17 @@ export function renderQuiz(app, root) {
       clearInterval(timerId);
       timerId = null;
     }
+  }
+
+  let minutesFlushed = false;
+  /** V2.2：本次用时记进今日分钟。退出和收关互斥，只走一条路；再加
+   * minutesFlushed 守卫，保证只记一次；0 道题不记（打开看一眼就走不算练）。 */
+  function flushMinutes() {
+    if (minutesFlushed || answered === 0) return;
+    minutesFlushed = true;
+    const minutes = Math.max(1, Math.round((Date.now() - session.startedAt) / 60000));
+    addDailyMinutes(state, minutes);
+    saveState(state);
   }
 
   function headerHtml(title) {
@@ -607,6 +618,7 @@ export function renderQuiz(app, root) {
     if (finished) return;
     finished = true;
     stopTimer();
+    flushMinutes();
     const minutes = Math.max(1, Math.round((Date.now() - session.startedAt) / 60000));
     let bonus = 0;
     if (!session.mini) {
@@ -654,7 +666,8 @@ export function renderQuiz(app, root) {
   }
 
   function quit() {
-    if (answered > 0 && !confirm('现在退出，这一关的答题记录会保留，但不算打卡。确定吗？')) return;
+    if (answered > 0 && !confirm(`现在退出，今天做的 ${answered} 道题会保留并计入今日，但不算打卡。确定吗？`)) return;
+    flushMinutes();
     stopTimer();
     app.session = null;
     app.go('home');
