@@ -73,6 +73,7 @@ export function masteryHTML(rows) {
       <div class="row-main">
         <div class="row-title">${esc(r.name)}</div>
         <div class="row-sub">已掌握 ${r.mastered} / ${r.total} 个考点</div>
+        <div class="row-sub">掌握口径：一个考点做满 3 道题、且对 80% 以上，才算掌握这个考点。刚开始练，掌握数是 0 很正常。</div>
       </div>
       <span class="chip">${r.rate === null ? '还没练' : `${r.rate}% 正确`}</span>
     </div>`).join('');
@@ -91,7 +92,11 @@ export function computeWeakTop(state, topicById = {}, questionsById = new Map(),
     const w = entries[0];
     const q = w ? questionsById.get(w.questionId) : null;
     let myAnswerText = '';
-    if (q && w?.myAnswer) {
+    // V2.1：浏览器里可能还留着 V1 的旧错题记录，V2 改过题目答案后会
+    // 对不上——如果记录里的答案就是这道题现在的正确答案，说明这条
+    // 记录已经失效，只显示代表错题和累计次数，不显示“他当时选了”那行。
+    // 数据本身不动，只是不展示自相矛盾的那一行。
+    if (q && w?.myAnswer && w.myAnswer !== q.answer) {
       const choice = (q.choices || []).find((c) => c.key === w.myAnswer);
       myAnswerText = choice ? `${w.myAnswer}「${choice.text}」` : String(w.myAnswer);
     }

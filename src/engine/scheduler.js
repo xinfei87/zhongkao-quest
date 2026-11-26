@@ -158,6 +158,15 @@ function toCard(t) {
   };
 }
 
+/** V2.1 上一题回看不重复计分：同一道题在一次做题里只记一次分。
+ * 第一次调用返回 true（可以记分），之后再调用一律返回 false；
+ * 做题页 showResult 的守卫就用它，回看时直接跳过记分、记错题和插补救题。 */
+export function markAnsweredOnce(answeredIds, questionId) {
+  if (answeredIds.has(questionId)) return false;
+  answeredIds.add(questionId);
+  return true;
+}
+
 /** 记一道题的结果，返回本次获得的积分 */
 export function recordAnswer(state, { subject, question, correct, firstTry = true, myAnswer = '', date = dayKey() }) {
   const st = (state.topicStats[question.topicId] ||= {
