@@ -268,17 +268,26 @@ h1, h2, h3, p { margin: 0; }
 
 /* ============ 平板双栏 ============ */
 .quiz-layout { display: grid; grid-template-columns: 1fr; gap: 16px; }
-.draft { display: none; }
+/* V2 草稿纸：手机上也有，默认折叠、点开能画；宽屏默认展开 */
+.draft { display: block; }
+.draft canvas {
+  display: none;
+  width: 100%; height: 220px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: #fff; touch-action: none; cursor: crosshair;
+}
+.draft.open canvas { display: block; }
+.draft-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.draft-tools { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 @media (min-width: 768px) {
   body { font-size: 18px; }
   .app { padding: 0 28px 32px; }
   .quiz-layout { grid-template-columns: 1fr 1fr; align-items: start; }
   .draft { display: block; position: sticky; top: 16px; }
   .draft canvas {
+    display: block;
     width: 100%; height: 420px; border-radius: var(--radius);
     border: 1px solid var(--line); background: #fff; touch-action: none; cursor: crosshair;
   }
-  .draft-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .hero { padding: 40px 32px; }
   .hero h1 { font-size: 30px; }
   .grid-2 { grid-template-columns: repeat(4, 1fr); }
@@ -286,3 +295,30 @@ h1, h2, h3, p { margin: 0; }
 @media (min-width: 1024px) {
   .quiz-layout { grid-template-columns: 7fr 5fr; }
 }
+
+/* ============ V2 新增 ============ */
+/* 五段式讲解的分步列表 */
+.explain-steps { margin: 6px 0 0; padding-left: 20px; }
+.explain-steps li { margin-bottom: 4px; }
+/* 问老师的回答框 */
+.teacher-box {
+  margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--primary-weak); border: 1px solid #BFDBFE;
+  font-size: 15px; line-height: 1.7;
+}
+/* 30 分钟到点提示条 */
+.timeup-banner {
+  margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-sm);
+  background: var(--warm-weak); border: 1px solid #FDE68A;
+  font-size: 14px; color: var(--ink-2);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+/* 家长端默认 PIN 警告 */
+.warn-banner {
+  margin-bottom: 12px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: #FEF2F2; border: 1px solid #FECACA;
+  font-size: 15px; font-weight: 600; color: #991B1B;
+}
+/* 最近 7 天趋势条（纯 CSS，不引入图表库） */
+.trend-bar { height: 8px; border-radius: 99px; background: #E2E8F0; overflow: hidden; margin-top: 6px; }
+.trend-fill { height: 100%; border-radius: 99px; background: var(--primary); }

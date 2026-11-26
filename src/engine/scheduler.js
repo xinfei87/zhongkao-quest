@@ -3,6 +3,7 @@
  * 纯逻辑，不改 DOM。
  */
 import { addDays, dayKey, shuffle } from '../util.js';
+import { pickVariantQuestion } from './backtrack.js';
 
 export function groupByTopic(questions = []) {
   const map = new Map();
@@ -37,7 +38,9 @@ export function rotateSubject(subjects, state) {
 
 const isBasic = (q) => q.difficulty === 'basic';
 
-/** 选关内的主攻考点：优先「薄弱且未掌握」，其次按教材顺序 */
+/** 选关内的主攻考点：优先「错得最多且未掌握」，其次按七年级→八年级→九年级补地基。
+ * V2 改动：旧逻辑优先九年级（(grade-7)*40），对基础差的学生是反的——
+ * 地基没补牢就直接上九年级，越练越挫。改为年级越低分越高。 */
 export function pickFocusTopic({ topics, questionsByTopic, state, chapter }) {
   const usable = topics.filter((t) => (questionsByTopic.get(t.id) || []).length);
   if (!usable.length) return null;
@@ -47,11 +50,13 @@ export function pickFocusTopic({ topics, questionsByTopic, state, chapter }) {
   const score = (t) => {
     const st = state.topicStats[t.id];
     if (st?.mastered) return -1000;
-    // 初三备考：先把九年级的漏洞补完，再往八年级、七年级走
-    let s = (Number(t.grade || 9) - 7) * 40;
+    // 先看错得多不多（连错、不稳都加分），再看年级：七年级地基优先。
+    // 连错权重（15/次）大于一个年级差（30 分）：连错 2 次以上就压过年级分，
+    // 保证“错得最多优先”，年级只在错得差不多时才起作用。
+    let s = (9 - Number(t.grade || 9)) * 30;
     if (!st) return s + 20;
-    s += (st.wrongStreak || 0) * 6;
-    s += st.shaky ? 4 : 0;
+    s += (st.wrongStreak || 0) * 15;
+    s += st.shaky ? 6 : 0;
     s -= st.correct || 0;
     return s;
   };
@@ -83,10 +88,19 @@ export function buildSession({ subject, topics, questions, state, chapter = null
   take(opener);
 
   // 错题回炉最多 1 道，且不能是开场题
-  const wrong = dueWrong(state, subject, today)
+  // V2：回炉优先出同考点变式题（背住原题答案是过不了关的），变式题带 variantOf
+  // 指向原错题，答对了算到原错题头上；没有变式题时才回落到原题。
+  const wrongOrig = dueWrong(state, subject, today)
     .map((w) => byId.get(w.questionId))
     .find((q) => q && !chosen.some((c) => c.id === q.id));
-  if (wrong) take(wrong);
+  if (wrongOrig) {
+    const variant = pickVariantQuestion({
+      topicId: wrongOrig.topicId,
+      questionsByTopic,
+      excludeIds: [wrongOrig.id, ...chosen.map((c) => c.id)],
+    });
+    take(variant ? { ...variant, variantOf: wrongOrig.id } : wrongOrig);
+  }
 
   // 同章优先，其次同科，避开最近做过的题
   const scopedTopicIds = new Set(
@@ -114,6 +128,8 @@ export function buildSession({ subject, topics, questions, state, chapter = null
     chapter: chapter || focus?.chapter || '',
     focusTopicId: focus?.id || null,
     focusTopicName: focus?.name || '',
+    // V2：首页要显示“当前主攻几年级”，把主攻考点的年级带出去
+    focusGrade: focus?.grade ?? null,
     questions: chosen,
     flashcards: buildFlashcards({ subject, topics, questionsByTopic, state, focus }),
     estimatedMinutes: Math.max(5, Math.round(chosen.length * 2.5 + 2)),
@@ -143,7 +159,7 @@ function toCard(t) {
 }
 
 /** 记一道题的结果，返回本次获得的积分 */
-export function recordAnswer(state, { subject, question, correct, firstTry = true, date = dayKey() }) {
+export function recordAnswer(state, { subject, question, correct, firstTry = true, myAnswer = '', date = dayKey() }) {
   const st = (state.topicStats[question.topicId] ||= {
     seen: 0, correct: 0, wrongStreak: 0, shaky: false, mastered: false, lastSeen: '',
   });
@@ -165,6 +181,8 @@ export function recordAnswer(state, { subject, question, correct, firstTry = tru
       existing.lastWrong = date;
       existing.status = 'reviewing';
       existing.streak = 0;
+      // V2：记下他当时选的答案，家长看板薄弱 Top 5 要展示“代表错题 + 他选了什么”
+      if (myAnswer !== '') existing.myAnswer = myAnswer;
     } else {
       state.wrongBook.push({
         questionId: question.id,
@@ -174,6 +192,8 @@ export function recordAnswer(state, { subject, question, correct, firstTry = tru
         streak: 0,
         lastWrong: date,
         status: 'new',
+        // V2：同上
+        myAnswer: myAnswer || '',
       });
     }
   } else if (existing) {

@@ -41,14 +41,26 @@ export function renderMe(app, root) {
         <div class="row-main"><div class="row-title">家长入口</div><div class="row-sub">需要 PIN 码</div></div>
         <span class="hint">🔒</span>
       </div>
+      <div class="row" id="teacher">
+        <div class="row-main"><div class="row-title">我是老师</div><div class="row-sub">粘贴家长分享码，只读查看</div></div>
+        <span class="hint">›</span>
+      </div>
     </div>
 
     <h2 class="sec-title">每日题量</h2>
     <div class="card">
       <div class="btn-row">
-        ${[3, 4, 5].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n} 题</button>`).join('')}
+        ${[3, 4, 5, 12].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n === 12 ? '12 题 · 约 30 分钟' : `${n} 题`}</button>`).join('')}
       </div>
-      <p class="hint" style="margin-top:10px">题量越大，一关时间越长。建议保持 4 题、10 分钟左右。</p>
+      <p class="hint" style="margin-top:10px">题量越大，一关时间越长。12 题约 30 分钟，到点会提示收尾。</p>
+    </div>
+
+    <h2 class="sec-title">每天目标</h2>
+    <div class="card">
+      <div class="btn-row">
+        ${[15, 30, 45].map((m) => `<button class="btn btn-sm ${(s.profile.dailyGoalMinutes || 30) === m ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
+      </div>
+      <p class="hint" style="margin-top:10px">做到目标分钟会提示“可以收尾了”，做完当前题就能结束。</p>
     </div>
 
     <p class="hint" style="margin-top:24px;text-align:center;line-height:1.8">
@@ -59,12 +71,21 @@ export function renderMe(app, root) {
   root.querySelector('#rewards').onclick = () => app.go('rewards');
   root.querySelector('#chapters').onclick = () => app.go('chapters');
   root.querySelector('#parent').onclick = () => app.go('parent');
+  root.querySelector('#teacher').onclick = () => app.go('teacher');
   root.querySelector('#wrongbook').onclick = () => showWrongBook(app, root);
   root.querySelectorAll('[data-size]').forEach((b) => {
     b.onclick = () => {
       s.profile.dailyQuestions = Number(b.dataset.size);
       saveState(s);
       toast('已设为每天 ' + b.dataset.size + ' 题');
+      renderMe(app, root);
+    };
+  });
+  root.querySelectorAll('[data-goal]').forEach((b) => {
+    b.onclick = () => {
+      s.profile.dailyGoalMinutes = Number(b.dataset.goal);
+      saveState(s);
+      toast('每天目标已设为 ' + b.dataset.goal + ' 分钟');
       renderMe(app, root);
     };
   });
@@ -98,7 +119,7 @@ function showWrongBook(app, root) {
           <div class="row">
             <div class="row-main">
               <div class="row-title">${esc(topicById[w.topicId]?.name || w.topicId)}</div>
-              <div class="row-sub">${esc(topicById[w.topicId]?.chapter || '')} · 错 ${w.count} 次 · ${w.status === 'new' ? '新错' : '复习中'}</div>
+              <div class="row-sub">${esc(topicById[w.topicId]?.chapter || '')} · 错 ${w.count} 次 · ${w.status === 'new' ? '新错' : '复习中'} · 再对 ${Math.max(1, 2 - (w.streak || 0))} 次消灭</div>
             </div>
           </div>`).join('')}
       </div>

@@ -1,8 +1,17 @@
 import { esc, toast, dayKey, uid } from '../util.js';
-import { weekStats, topWeakTopics } from '../engine/scheduler.js';
+import { weekStats } from '../engine/scheduler.js';
 import { saveState, resetProgress, exportState, replaceState } from '../store/local.js';
 import { encodeState, decodeState } from '../store/sync.js';
+import { createTeacherShare, TEACHER_SHARE_DAYS } from '../store/teacherShare.js';
+import { hasTeacherKey, getTeacherKeySuffix, saveTeacherKey, saveTeacherModel, getTeacherModel, TEACHER_DEFAULT_MODEL } from '../engine/teacher.js';
 import { loadSubject } from '../data.js';
+import {
+  computeToday, todayCardHTML,
+  computeMastery, masteryHTML,
+  computeWeakTop, weakTopHTML,
+  computeTrend, trendHTML,
+  computeTeacherUse, teacherUseHTML,
+} from './dashboard.js';
 
 export function renderParent(app, root) {
   const s = app.state;
@@ -37,6 +46,12 @@ export function renderParent(app, root) {
 
   const week = weekStats(s, 7);
   const sessions = (s.sessions || []).slice(-7).reverse();
+  const today = computeToday(s, app.index.subjects);
+  const trend = computeTrend(s, 7);
+  const teacherUse = computeTeacherUse(s);
+  const lastSyncText = s.lastSyncAt
+    ? `最近一次同步：${new Date(s.lastSyncAt).toLocaleString('zh-CN')}`
+    : '还没同步过（本机数据就是实时的）';
 
   root.innerHTML = `
     <div class="btn-row" style="margin-bottom:12px">
@@ -46,6 +61,17 @@ export function renderParent(app, root) {
     <h1 style="font-size:22px;margin-bottom:4px">家长看板</h1>
     <p class="hint" style="margin-bottom:14px">只看趋势，不做实时监控。孩子端看不到这些数字。</p>
 
+    ${s.profile.pin === '1234' ? `
+    <div class="warn-banner">
+      ⚠️ 你还在用默认 PIN 1234，知道 PIN 的人都能进家长入口。请马上到下面“设置”里改掉。
+    </div>` : ''}
+
+    <h2 class="sec-title">今日完成情况</h2>
+    <div class="card" style="padding:14px 18px">
+      ${todayCardHTML(today)}
+      <p class="hint" style="margin-top:10px">目标：每天 ${today.goal} 分钟。今日数据是本机实时的。</p>
+    </div>
+
     <h2 class="sec-title">本周</h2>
     <div class="grid-2">
       <div class="stat"><b>${week.days}</b><span>练习天数</span></div>
@@ -54,9 +80,25 @@ export function renderParent(app, root) {
       <div class="stat"><b>${week.rate}%</b><span>正确率</span></div>
     </div>
 
-    <h2 class="sec-title">根因 Top 3</h2>
+    <h2 class="sec-title">知识掌握情况（按科目）</h2>
+    <div class="card" style="padding:6px 18px" id="mastery-box">
+      <p class="hint" style="padding:14px 0">统计中…</p>
+    </div>
+
+    <h2 class="sec-title">薄弱 Top 5</h2>
     <div class="card" style="padding:6px 18px" id="weak-box">
       <p class="hint" style="padding:14px 0">统计中…</p>
+    </div>
+
+    <h2 class="sec-title">最近 7 天正确率趋势</h2>
+    <div class="card" style="padding:6px 18px">
+      ${trendHTML(trend)}
+    </div>
+
+    <h2 class="sec-title">问老师与提示（本周）</h2>
+    <div class="card" style="padding:14px 18px">
+      ${teacherUseHTML(teacherUse)}
+      <p class="hint" style="margin-top:10px">提示看到第 3 级次数多，说明这周的题对他偏难；问老师次数多，说明他在主动求助，是好事。</p>
     </div>
 
     <h2 class="sec-title">最近的关</h2>
@@ -69,6 +111,33 @@ export function renderParent(app, root) {
           </div>
           <span class="chip">+${x.points}</span>
         </div>`).join('') || '<p class="hint" style="padding:14px 0">还没有记录。</p>'}
+    </div>
+
+    <h2 class="sec-title">AI 老师设置</h2>
+    <div class="card">
+      <p class="hint">“问老师”用 Gemini 免费版 API（BYOK：家长自己填 Key）。Key 只存在这台设备的浏览器里，不会上传、不会同步、不会进仓库。没填 Key 时，“问老师”按钮会提示先来这里设置。</p>
+      <div class="btn-row" style="margin-top:10px">
+        <input class="answer-input" id="ai-key" type="password" placeholder="粘贴 Gemini API Key" style="flex:2" autocomplete="off" />
+        <button class="btn btn-sm btn-primary" id="ai-save">保存 Key</button>
+      </div>
+      <p class="hint" style="margin-top:8px" id="ai-status">${hasTeacherKey(localStorage) ? `已填写：${esc(getTeacherKeySuffix(localStorage))}` : '未填写'}</p>
+      <div class="btn-row" style="margin-top:10px">
+        <input class="answer-input" id="ai-model" placeholder="模型（默认 gemini-2.5-flash-lite）" style="flex:2" value="${esc(getTeacherModel(localStorage))}" />
+        <button class="btn btn-sm" id="ai-model-save">保存模型</button>
+      </div>
+      <p class="hint" style="margin-top:8px">取 Key 的官方页面：<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>（免费版就行，不用 Pro）。默认模型 ${esc(TEACHER_DEFAULT_MODEL)}，404 时自动改调 gemini-flash-lite-latest。</p>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn btn-sm btn-ghost" id="ai-clear">清除 Key</button>
+      </div>
+    </div>
+
+    <h2 class="sec-title">分享给老师（只读）</h2>
+    <div class="card">
+      <p class="hint">点“生成老师分享码”，把码发给老师。老师在本站首页点“我是老师”粘贴码，就能看到和上面一样的看板（今日完成、掌握度、薄弱点、错题），但只能看：不能改设置、不能兑换积分、不能清空进度，也看不到 PIN 和 Key。分享码 ${TEACHER_SHARE_DAYS} 天内有效，过期请重新生成。</p>
+      <p class="hint" style="margin-top:6px">步骤：1. 家长点下面生成分享码 → 2. 把码发给老师 → 3. 老师打开本站首页“我是老师”粘贴 → 4. 只能看，不能改；7 天后失效。</p>
+      <button class="btn btn-sm btn-primary" id="share-gen" style="margin-top:10px">生成老师分享码</button>
+      <textarea class="answer-input" id="share-code" rows="3" style="margin-top:10px;font-family:monospace;font-size:13px" readonly placeholder="分享码会出现在这里"></textarea>
+      <p class="hint" style="margin-top:8px">老师看到的是生成那一刻的快照，不是实时数据；想让老师看到最新进度，重新生成一个发过去就行。</p>
     </div>
 
     <h2 class="sec-title">奖励清单</h2>
@@ -89,7 +158,7 @@ export function renderParent(app, root) {
 
     <h2 class="sec-title">跨端同步</h2>
     <div class="card">
-      <p class="hint">在一台设备生成口令码，粘贴到另一台设备导入，进度就搬过去了。</p>
+      <p class="hint">孩子进度存在孩子那台设备上。家长/老师在自己手机上看，要先在孩子设备上点“生成同步口令码”，再到自己手机上导入。V2 不是实时同步：你看到的都是最近一次同步的快照，时间以 ${esc(lastSyncText)} 为准。</p>
       <button class="btn btn-sm" id="gen" style="margin-top:10px">生成同步口令码</button>
       <textarea class="answer-input" id="code" rows="3" style="margin-top:10px;font-family:monospace;font-size:13px" placeholder="口令码会出现在这里，也可以粘贴别人的口令码后点导入"></textarea>
       <div class="btn-row" style="margin-top:10px">
@@ -104,7 +173,16 @@ export function renderParent(app, root) {
         <input class="answer-input" id="new-pin" inputmode="numeric" maxlength="8" placeholder="新的家长 PIN" style="flex:1" />
         <button class="btn btn-sm" id="save-pin">保存 PIN</button>
       </div>
-      <div class="btn-row" style="margin-top:10px">
+      <p class="hint" style="margin-top:8px">PIN 只存本机，绝不写进仓库。改掉默认 1234 后，记得告诉家里人新 PIN。</p>
+      <h3 style="font-size:15px;margin:16px 0 8px">每天目标</h3>
+      <div class="btn-row">
+        ${[15, 30, 45].map((m) => `<button class="btn btn-sm ${(s.profile.dailyGoalMinutes || 30) === m ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
+      </div>
+      <h3 style="font-size:15px;margin:16px 0 8px">每日题量</h3>
+      <div class="btn-row">
+        ${[3, 4, 5, 12].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n === 12 ? '12 题 · 约 30 分钟' : `${n} 题`}</button>`).join('')}
+      </div>
+      <div class="btn-row" style="margin-top:16px">
         <button class="btn btn-sm btn-warm" id="reset">清空全部进度</button>
       </div>
       <p class="hint" style="margin-top:10px">清空会删掉连击、错题本和积分，但保留 PIN。请谨慎操作。</p>
@@ -114,18 +192,21 @@ export function renderParent(app, root) {
   root.querySelector('#back').onclick = () => app.go('me');
   root.querySelector('#logout').onclick = () => { app.parentAuthed = false; app.go('home'); };
 
-  // 根因：需要科目数据补名字
-  const ids = [...new Set((s.wrongBook || []).map((w) => w.subject))];
-  Promise.all(ids.map((id) => loadSubject(id).catch(() => null))).then((sets) => {
+  // 掌握度 + 薄弱 Top 5：需要各科的 topics/questions 数据，异步加载后填进去
+  Promise.all(app.index.subjects.map((sub) => loadSubject(sub.id).catch(() => null))).then((sets) => {
     const topicById = {};
-    sets.forEach((d) => { if (d) Object.assign(topicById, d.topicById); });
-    const top = topWeakTopics(s, topicById, 3);
-    root.querySelector('#weak-box').innerHTML = top.length
-      ? top.map((t) => `
-          <div class="row">
-            <div class="row-main"><div class="row-title">${esc(t.name)}</div><div class="row-sub">累计错 ${t.count} 次</div></div>
-          </div>`).join('')
-      : '<p class="hint" style="padding:14px 0">没有未消灭的错题，很好。</p>';
+    const questionsById = new Map();
+    const subjectData = [];
+    sets.forEach((d, i) => {
+      if (!d) return;
+      Object.assign(topicById, d.topicById);
+      d.questionsById.forEach((q, id) => questionsById.set(id, q));
+      subjectData.push({ subject: app.index.subjects[i], topics: d.topics });
+    });
+    const masteryBox = root.querySelector('#mastery-box');
+    if (masteryBox) masteryBox.innerHTML = masteryHTML(computeMastery(s, subjectData));
+    const weakBox = root.querySelector('#weak-box');
+    if (weakBox) weakBox.innerHTML = weakTopHTML(computeWeakTop(s, topicById, questionsById, 5));
   });
 
   root.querySelectorAll('[data-del]').forEach((b) => {
@@ -149,6 +230,8 @@ export function renderParent(app, root) {
   root.querySelector('#gen').onclick = async () => {
     const code = await encodeState(s);
     root.querySelector('#code').value = code;
+    s.lastSyncAt = Date.now();
+    saveState(s);
     toast('已生成，复制发给另一台设备');
   };
 
@@ -175,13 +258,63 @@ export function renderParent(app, root) {
     URL.revokeObjectURL(a.href);
   };
 
+  // V2：AI 老师设置（Key 只存本机 localStorage，不进 state、不进同步、不进仓库）
+  root.querySelector('#ai-save').onclick = () => {
+    const key = root.querySelector('#ai-key').value.trim();
+    if (!key) return toast('先粘贴 Key');
+    saveTeacherKey(localStorage, key);
+    root.querySelector('#ai-key').value = '';
+    root.querySelector('#ai-status').textContent = `已填写：${getTeacherKeySuffix(localStorage)}`;
+    toast('Key 已保存到这台设备');
+  };
+  root.querySelector('#ai-model-save').onclick = () => {
+    const model = root.querySelector('#ai-model').value.trim() || TEACHER_DEFAULT_MODEL;
+    saveTeacherModel(localStorage, model);
+    toast('模型已保存：' + model);
+  };
+  root.querySelector('#ai-clear').onclick = () => {
+    if (!confirm('确定清除这台设备上存的 Gemini Key 吗？清除后“问老师”就用不了了。')) return;
+    saveTeacherKey(localStorage, '');
+    root.querySelector('#ai-status').textContent = '未填写';
+    toast('Key 已清除');
+  };
+
+  // V2：分享给老师（只读快照，7 天有效，快照里没有 PIN 和 Key）
+  root.querySelector('#share-gen').onclick = async () => {
+    try {
+      const code = await createTeacherShare(s);
+      root.querySelector('#share-code').value = code;
+      toast('分享码已生成，7 天内有效');
+    } catch (e) {
+      toast(e.message || '生成失败');
+    }
+  };
+
   root.querySelector('#save-pin').onclick = () => {
     const pin = root.querySelector('#new-pin').value.trim();
     if (pin.length < 4) return toast('PIN 至少 4 位');
     s.profile.pin = pin;
     saveState(s);
     toast('PIN 已更新');
+    renderParent(app, root);
   };
+
+  root.querySelectorAll('[data-goal]').forEach((b) => {
+    b.onclick = () => {
+      s.profile.dailyGoalMinutes = Number(b.dataset.goal);
+      saveState(s);
+      toast('每天目标已设为 ' + b.dataset.goal + ' 分钟');
+      renderParent(app, root);
+    };
+  });
+  root.querySelectorAll('[data-size]').forEach((b) => {
+    b.onclick = () => {
+      s.profile.dailyQuestions = Number(b.dataset.size);
+      saveState(s);
+      toast('已设为每天 ' + b.dataset.size + ' 题');
+      renderParent(app, root);
+    };
+  });
 
   root.querySelector('#reset').onclick = () => {
     if (!confirm('确定清空全部进度？这个操作不能撤销。')) return;

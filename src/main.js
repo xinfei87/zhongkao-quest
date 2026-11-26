@@ -1,6 +1,7 @@
 import { loadIndex, loadSubject } from './data.js';
 import { loadState, saveState } from './store/local.js';
-import { buildSession, rotateSubject } from './engine/scheduler.js';
+import { buildSession, pickSubject, groupByTopic, rotateSubject } from './engine/scheduler.js';
+import { pickVariantQuestion } from './engine/backtrack.js';
 import { dayKey, toast } from './util.js';
 import { renderHome } from './views/home.js';
 import { renderChapters } from './views/chapters.js';
@@ -9,6 +10,7 @@ import { renderLabs } from './views/labs.js';
 import { renderMe } from './views/me.js';
 import { renderRewards } from './views/rewards.js';
 import { renderParent } from './views/parent.js';
+import { renderTeacher } from './views/teacher.js';
 
 const app = {
   state: loadState(),
@@ -73,6 +75,8 @@ const app = {
       case 'me': renderMe(this, view); break;
       case 'rewards': renderRewards(this, view); break;
       case 'parent': renderParent(this, view); break;
+      // V2：老师只读查看（粘贴家长分享码，只能看不能改）
+      case 'teacher': renderTeacher(this, view); break;
       default: renderHome(this, view);
     }
   },
@@ -96,9 +100,13 @@ const app = {
 
   /** 开始今日一关 / 指定章节 */
   async startSession({ subjectId, chapter = null, size = null } = {}) {
+    // V2：首页显示的科目和实际开的科目必须是同一个。旧版首页用 pickSubject 取
+    // “今天这科”，开局却用 rotateSubject 先轮换到下一科——语文做完首页却显示
+    // “数学 · 今天已完成”，就是这么错标的。现在开局也用 pickSubject，只在
+    // 用户点“换一关”时才轮换。
     const subject = subjectId
       ? this.index.subjects.find((x) => x.id === subjectId)
-      : rotateSubject(this.index.subjects, this.state);
+      : pickSubject(this.index.subjects, this.state);
     if (!subject) return toast('还没有可练的科目');
     this.state.today = { date: dayKey(), subject: subject.id, done: false };
     saveState(this.state);
@@ -113,6 +121,9 @@ const app = {
       size: size || this.state.profile.dailyQuestions || 4,
     });
     if (!session.questions.length) return toast('这一章暂时没有可用的题');
+    // V2：记下本关主攻年级和考点，首页显示“主攻七年级 · 某某考点”
+    this.state.focus = { subject: subject.id, grade: session.focusGrade ?? null, topic: session.focusTopicName || '' };
+    saveState(this.state);
     this.session = {
       ...session,
       title: chapter || '今日一关',
@@ -143,8 +154,23 @@ const app = {
     pending.forEach((w) => count.set(w.subject, (count.get(w.subject) || 0) + 1));
     const subjectId = [...count.entries()].sort((a, b) => b[1] - a[1])[0][0];
     const d = await loadSubject(subjectId);
-    const ids = pending.filter((w) => w.subject === subjectId).slice(0, 5).map((w) => w.questionId);
-    const questions = ids.map((id) => d.questionsById.get(id)).filter(Boolean);
+    const byTopic = groupByTopic(d.questions);
+    // V2：回炉优先出同考点变式题（背住原题答案是过不了关的），变式题带 variantOf
+    // 指向原错题，答对了算到原错题头上；没有变式题时才回落到原题。
+    const questions = pending
+      .filter((w) => w.subject === subjectId)
+      .slice(0, 5)
+      .map((w) => {
+        const orig = d.questionsById.get(w.questionId);
+        if (!orig) return null;
+        const variant = pickVariantQuestion({
+          topicId: w.topicId,
+          questionsByTopic: byTopic,
+          excludeIds: [w.questionId],
+        });
+        return variant ? { ...variant, variantOf: w.questionId } : orig;
+      })
+      .filter(Boolean);
     if (!questions.length) return toast('错题对应的题目没找到');
     const subject = this.index.subjects.find((s) => s.id === subjectId);
     this.session = {
@@ -163,8 +189,8 @@ const app = {
     this.go('quiz');
   },
 
-  /** 小测：实验室「看懂后测一题」、回溯补题 */
-  startMiniQuiz({ questions, title, data = null, onDone }) {
+  /** 小测：实验室「看完测一题」、回溯补题 */
+  startMiniQuiz({ questions, title, data = null, onDone, returnTo = null }) {
     this.session = {
       questions,
       flashcards: [],
@@ -173,6 +199,8 @@ const app = {
       data,
       startedAt: Date.now(),
       onDone,
+      // V2：测完回哪里（实验室的测题回 #/labs，不填默认回首页）
+      returnTo,
     };
     this.go('quiz');
   },
