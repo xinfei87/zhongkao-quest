@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { judgeNumeric, judgeChoice, judgeShort, judge, inputCount } from '../src/engine/judge.js';
 import { diagnose, buildHardIndex, pickConfirmQuestion } from '../src/engine/backtrack.js';
-import { recordAnswer, buildSession, pickFocusTopic, groupByTopic, completeSession } from '../src/engine/scheduler.js';
+import { recordAnswer, buildSession, pickFocusTopic, groupByTopic, completeSession, markAnsweredOnce } from '../src/engine/scheduler.js';
 
 test('数值判分：分数、小数、百分数互通', () => {
   assert.equal(judgeNumeric('3/4', ['0.75']), true);
@@ -148,7 +148,7 @@ import { pickVariantQuestion } from '../src/engine/backtrack.js';
 import { buildTeacherUserText, TEACHER_SYSTEM_PROMPT, TEACHER_DEFAULT_MODEL, TEACHER_FALLBACK_MODEL, askTeacher } from '../src/engine/teacher.js';
 import { createTeacherShare, decodeTeacherShare } from '../src/store/teacherShare.js';
 import { encodeState } from '../src/store/sync.js';
-import { computeToday, computeTrend, computeTeacherUse, computeWeakTop } from '../src/views/dashboard.js';
+import { computeToday, computeTrend, computeTeacherUse, computeWeakTop, masteryHTML } from '../src/views/dashboard.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -364,4 +364,61 @@ test('V2 数据完整性：全部 7 科 id 不重复、topicId 存在、答案�
       assert.ok(tids.has(d.from) && tids.has(d.to), `deps 两端不存在 ${d.from}→${d.to}`);
     }
   }
+});
+
+test('V2.1 上一题回看：同一道题第二次不再记分、不重复记错题、不重复刷 seen', () => {
+  // 测的是做题页 showResult 里那道守卫用的同一机制：第一次作答记分，
+  // 点“上一题”回来再看一次，守卫拦住，不应再调 recordAnswer。
+  const state = { topicStats: {}, wrongBook: [], recent: [], points: 0 };
+  const answeredIds = new Set();
+  const q = mkQ('q1', 'T');
+  assert.equal(markAnsweredOnce(answeredIds, q.id), true);
+  recordAnswer(state, { subject: 'math', question: q, correct: false, firstTry: true, myAnswer: 'B' });
+  assert.equal(state.points, 0);
+  assert.equal(state.topicStats.T.seen, 1);
+  assert.equal(state.wrongBook.length, 1);
+  // 回看：守卫返回 false，调用方直接跳过记分，state 原样不动
+  assert.equal(markAnsweredOnce(answeredIds, q.id), false);
+  assert.equal(markAnsweredOnce(answeredIds, q.id), false);
+  assert.equal(state.topicStats.T.seen, 1);
+  assert.equal(state.wrongBook.length, 1);
+  assert.equal(state.points, 0);
+  // 另一道题不受影响，照常记分
+  assert.equal(markAnsweredOnce(answeredIds, 'q2'), true);
+  recordAnswer(state, { subject: 'math', question: mkQ('q2', 'T'), correct: true, firstTry: true });
+  assert.equal(state.points, 2);
+});
+
+test('V2.1 看板：旧错题记录里答案已是正确答案时，不显示“他当时选了”', () => {
+  const byId = new Map([
+    ['q1', { prompt: '题1', answer: 'A', choices: [{ key: 'A', text: '对' }, { key: 'B', text: '错' }] }],
+    ['q2', { prompt: '题2', answer: 'A', choices: [{ key: 'A', text: '对' }, { key: 'B', text: '错' }] }],
+  ]);
+  const topicById = { T: { name: '考点 T' } };
+  // q1 是 V1 旧记录：当时选了 A，但现在的正确答案也是 A——自相矛盾，不显示
+  const weak = computeWeakTop(
+    { wrongBook: [
+      { questionId: 'q1', topicId: 'T', subject: 'math', count: 3, status: 'new', myAnswer: 'A' },
+      { questionId: 'q2', topicId: 'T', subject: 'math', count: 1, status: 'new', myAnswer: 'B' },
+    ] },
+    topicById, byId, 5,
+  );
+  assert.equal(weak[0].prompt, '题1');
+  assert.equal(weak[0].count, 4);
+  assert.equal(weak[0].myAnswer, '');
+  // 真错的记录照常显示“他当时选了”
+  const weak2 = computeWeakTop(
+    { wrongBook: [{ questionId: 'q2', topicId: 'T', subject: 'math', count: 1, status: 'new', myAnswer: 'B' }] },
+    topicById, byId, 5,
+  );
+  assert.ok(weak2[0].myAnswer.includes('B'));
+});
+
+test('V2.1 看板：掌握数旁边写清口径，正确率单独显示', () => {
+  const html = masteryHTML([{ name: '数学', mastered: 0, total: 315, rate: 100 }]);
+  assert.ok(html.includes('已掌握 0 / 315 个考点'));
+  assert.ok(html.includes('做满 3 道') && html.includes('80%'));
+  assert.ok(html.includes('100% 正确'));
+  const empty = masteryHTML([{ name: '语文', mastered: 0, total: 189, rate: null }]);
+  assert.ok(empty.includes('还没练'));
 });

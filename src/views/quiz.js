@@ -1,6 +1,6 @@
 import { esc, toast, openSheet, closeSheet, vibrate, dayKey } from '../util.js';
 import { judge, inputCount } from '../engine/judge.js';
-import { groupByTopic, recordAnswer, recordFlashcard, markShaky, completeSession } from '../engine/scheduler.js';
+import { groupByTopic, recordAnswer, recordFlashcard, markShaky, completeSession, markAnsweredOnce } from '../engine/scheduler.js';
 import { pickConfirmQuestion, pickVariantQuestion, diagnose } from '../engine/backtrack.js';
 import { buildHintLevels, HINT_LEVELS } from '../engine/hints.js';
 import { askTeacher, hasTeacherKey, readTeacherCache, TEACHER_KEY_URL } from '../engine/teacher.js';
@@ -44,9 +44,25 @@ export function renderQuiz(app, root) {
   function paint() {
     if (cursor >= steps.length) return finish();
     const step = steps[cursor];
-    if (step.kind === 'flash') return paintFlash(step.card);
+    if (step.kind === 'flash') return paintFlash(step);
     if (step.kind === 'backtrack') return paintBacktrack(step);
     return paintQuestion(step);
+  }
+
+  /** V2.1 上一题：只回顾，不重新记分、不重新插补救题。
+   * 回看靠 step.review（答完当时存的作答结果）和 answeredIds 守卫，
+   * 第一题（cursor===0）时按钮禁用。 */
+  function goPrev() {
+    if (cursor <= 0) return;
+    cursor -= 1;
+    paint();
+  }
+  function prevBtnHtml(id = 'prev') {
+    return `<button class="btn" id="${id}" ${cursor === 0 ? 'disabled' : ''}>上一题</button>`;
+  }
+  function wirePrev(scope) {
+    const btn = scope.querySelector('#prev') || scope.querySelector('#prev-q');
+    if (btn) btn.onclick = () => goPrev();
   }
 
   // V2：进度按实际做过的题数算。总题数是动态的——答错后插入的补救题/回溯题
@@ -111,7 +127,35 @@ export function renderQuiz(app, root) {
   }
 
   /** ---------- 闪卡 ---------- */
-  function paintFlash(card) {
+  function paintFlash(step) {
+    const card = step.card;
+    // V2.1 回看：已经翻过的闪卡只展示答案，不再记分、不再加积分。
+    if (step.done) {
+      root.innerHTML = `
+        ${headerHtml('闪卡热身 · 激活记忆')}
+        <button class="flash flipped" id="flash">
+          <div class="flash-inner">
+            <div class="flash-face">
+              <span class="tag">先想一想，再翻面</span>
+              <div class="q">${esc(card.front)}</div>
+              <span class="hint">点一下卡片看答案</span>
+            </div>
+            <div class="flash-face back">
+              <span class="tag">答案 / 要点</span>
+              <div class="a">${esc(card.back)}</div>
+            </div>
+          </div>
+        </button>
+        <div class="btn-row" style="margin-top:16px">
+          ${prevBtnHtml()}
+          <button class="btn btn-primary" id="next">下一题</button>
+        </div>
+      `;
+      root.querySelector('#quit').onclick = quit;
+      wirePrev(root);
+      root.querySelector('#next').onclick = () => { cursor += 1; paint(); };
+      return;
+    }
     root.innerHTML = `
       ${headerHtml('闪卡热身 · 激活记忆')}
       <button class="flash" id="flash">
@@ -127,24 +171,30 @@ export function renderQuiz(app, root) {
           </div>
         </div>
       </button>
+      <div class="btn-row" style="margin-top:16px">
+        ${prevBtnHtml('prev-q')}
+      </div>
       <div class="btn-row" id="flash-actions" style="margin-top:16px;visibility:hidden">
         <button class="btn btn-ok" id="known">秒懂（3 天后见）</button>
         <button class="btn" id="fuzzy">有点糊（明天见）</button>
       </div>
     `;
     root.querySelector('#quit').onclick = quit;
+    wirePrev(root);
     const flash = root.querySelector('#flash');
     flash.onclick = () => {
       flash.classList.add('flipped');
       root.querySelector('#flash-actions').style.visibility = 'visible';
     };
     root.querySelector('#known').onclick = () => {
+      step.done = true;
       recordFlashcard(state, card.topicId, true);
       saveState(state);
       cursor += 1;
       paint();
     };
     root.querySelector('#fuzzy').onclick = () => {
+      step.done = true;
       recordFlashcard(state, card.topicId, false);
       saveState(state);
       cursor += 1;
@@ -158,6 +208,11 @@ export function renderQuiz(app, root) {
     const topic = topicOf(q);
     const n = q.type === 'numeric' ? inputCount(q) : 1;
     const multi = n > 1;
+    const levels = buildHintLevels(q, topic);
+    // V2.1 回看：step.review 是答完当时存的 { isCorrect, myAnswer }，回来只展示，
+    // 不重新判分、不重新记。hintShown 里还留着当时看过的提示级数，一并还原。
+    const review = step.review || null;
+    const shownHints = hintShown.get(q.id) || 0;
 
     root.innerHTML = `
       ${headerHtml(session.title || '今日一关')}
@@ -169,8 +224,9 @@ export function renderQuiz(app, root) {
           <div id="answer-area"></div>
           <div id="feedback"></div>
           <div style="margin-top:14px">
-            <button class="btn btn-sm btn-ghost" id="hint">💡 提示（0/${HINT_LEVELS}）</button>
-            <ol id="hint-list" class="hint-steps" style="display:none"></ol>
+            ${prevBtnHtml('prev-q')}
+            <button class="btn btn-sm btn-ghost" id="hint" ${review ? 'disabled' : ''}>💡 提示（${shownHints}/${HINT_LEVELS}）${review && shownHints >= HINT_LEVELS ? '，看完了' : ''}</button>
+            <ol id="hint-list" class="hint-steps" style="display:${shownHints ? 'block' : 'none'}">${levels.slice(0, shownHints).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
           </div>
         </section>
         ${draftHtml()}
@@ -179,15 +235,22 @@ export function renderQuiz(app, root) {
     root.querySelector('#quit').onclick = quit;
     mountDraft(root, q.id);
     startTimer();
+    wirePrev(root);
 
     const area = root.querySelector('#answer-area');
+    // 回看：按当时作答把作答区锁死，直接出讲解，不走判分
+    if (review) {
+      renderAnswerArea(area, q, n, multi, review.myAnswer);
+      showResult(step, q, topic, review.isCorrect, review.myAnswer, { reviewOnly: true });
+      return;
+    }
+    renderAnswerArea(area, q, n, multi, null);
 
     // V2 三级提示：hint1 考什么、hint2 第一步、hint3 半成品。点一次展开一级，
     // 按钮上的 0/3→1/3→2/3→3/3 真实推进；已展开的提示一直留在页面上，
     // 三级看完按钮才变灰。buildHintLevels 保证三级永远有文字，点后绝不空白。
     const hintList = root.querySelector('#hint-list');
     const hintBtn = root.querySelector('#hint');
-    const levels = buildHintLevels(q, topic);
     hintBtn.onclick = () => {
       const shown = hintShown.get(q.id) || 0;
       if (shown >= HINT_LEVELS) return;
@@ -215,23 +278,12 @@ export function renderQuiz(app, root) {
     };
 
     if (q.type === 'choice') {
-      area.innerHTML = `<div class="choices">${(q.choices || []).map((c) => `
-        <button class="choice" data-key="${esc(c.key)}"><span class="key">${esc(c.key)}</span><span>${esc(c.text)}</span></button>`).join('')}
-      </div>`;
       area.querySelectorAll('.choice').forEach((b) => {
         b.onclick = () => handle(b.dataset.key);
       });
       return;
     }
 
-    area.innerHTML = `
-      ${multi ? `<p class="hint" style="margin-bottom:8px">这题有 ${n} 个结果，分别填进下面 ${n} 个格子（顺序不限）。</p>` : ''}
-      <div class="choices" style="gap:8px">
-        ${Array.from({ length: n }, (_, i) => `<input class="answer-input" data-i="${i}" inputmode="${q.type === 'numeric' ? 'decimal' : 'text'}" placeholder="${multi ? `第 ${i + 1} 个结果` : '在这里写答案'}" autocomplete="off" />`).join('')}
-      </div>
-      <button class="btn btn-primary" id="submit" style="margin-top:14px">提交</button>
-      <p class="hint" style="margin-top:10px">${q.type === 'numeric' ? '可以写分数（如 3/4）、小数或百分数。' : '写不出来也没关系，也可以直接看解析。'}</p>
-    `;
     const inputs = [...area.querySelectorAll('.answer-input')];
     const doSubmit = () => handle(inputs.map((i) => i.value));
     root.querySelector('#submit').onclick = doSubmit;
@@ -242,6 +294,26 @@ export function renderQuiz(app, root) {
         else doSubmit();
       };
     });
+  }
+
+  /** 作答区渲染。presetAnswer 非空时是回看：把当时的答案填回去并锁死，不挂提交逻辑。 */
+  function renderAnswerArea(area, q, n, multi, presetAnswer) {
+    const locked = presetAnswer !== null && presetAnswer !== undefined;
+    if (q.type === 'choice') {
+      area.innerHTML = `<div class="choices">${(q.choices || []).map((c) => `
+        <button class="choice" data-key="${esc(c.key)}" ${locked ? 'disabled' : ''}><span class="key">${esc(c.key)}</span><span>${esc(c.text)}</span></button>`).join('')}
+      </div>`;
+      return;
+    }
+    const values = locked ? String(presetAnswer).split('，') : [];
+    area.innerHTML = `
+      ${multi ? `<p class="hint" style="margin-bottom:8px">这题有 ${n} 个结果，分别填进下面 ${n} 个格子（顺序不限）。</p>` : ''}
+      <div class="choices" style="gap:8px">
+        ${Array.from({ length: n }, (_, i) => `<input class="answer-input" data-i="${i}" inputmode="${q.type === 'numeric' ? 'decimal' : 'text'}" placeholder="${multi ? `第 ${i + 1} 个结果` : '在这里写答案'}" autocomplete="off" value="${esc(values[i] || '')}" ${locked ? 'disabled' : ''} />`).join('')}
+      </div>
+      ${locked ? '' : `<button class="btn btn-primary" id="submit" style="margin-top:14px">提交</button>
+      <p class="hint" style="margin-top:10px">${q.type === 'numeric' ? '可以写分数（如 3/4）、小数或百分数。' : '写不出来也没关系，也可以直接看解析。'}</p>`}
+    `;
   }
 
   /** 简答判不出来时，交给孩子自评 */
@@ -332,7 +404,11 @@ export function renderQuiz(app, root) {
     };
   }
 
-  function showResult(step, q, topic, isCorrect, myAnswer = '') {
+  function showResult(step, q, topic, isCorrect, myAnswer = '', opts = {}) {
+    // V2.1 回看模式：只展示当时的作答和讲解，不记分、不记错题、不插补救题。
+    const reviewOnly = !!opts.reviewOnly;
+    // V2.1：把这次作答存到 step 上，点“上一题”回来靠它还原；回看时不重存。
+    if (!reviewOnly) step.review = { isCorrect, myAnswer };
     const fb = root.querySelector('#feedback');
     const area = root.querySelector('#answer-area');
     // 锁住作答区：正确答案标绿打✓，自己选错的标红打✕
@@ -350,8 +426,9 @@ export function renderQuiz(app, root) {
     });
     area.querySelectorAll('.answer-input').forEach((i) => { i.disabled = true; });
 
-    if (!answeredIds.has(q.id)) {
-      answeredIds.add(q.id);
+    // V2.1：回看守卫——同一道题只记一次分。markAnsweredOnce 第一次返回 true，
+    // 回看时返回 false，直接跳过记分/记错题/刷新顶栏，answered、correct 都不动。
+    if (!reviewOnly && markAnsweredOnce(answeredIds, q.id)) {
       answered += 1;
       if (isCorrect) correct += 1;
       // V2：看过提示就不是首答；变式题（variantOf）答对了要算到原错题头上
@@ -364,7 +441,7 @@ export function renderQuiz(app, root) {
     }
 
     if (isCorrect) {
-      if (step.confirm) {
+      if (!reviewOnly && step.confirm) {
         markShaky(state, q.topicId);
         saveState(state);
       }
@@ -374,45 +451,50 @@ export function renderQuiz(app, root) {
           ${explanationHtml(q, topic, myAnswer, true)}
           <div class="teacher-box" id="teacher-box" style="display:none"></div>
           <div class="btn-row">
+            ${prevBtnHtml()}
             <button class="btn btn-primary" id="next">下一题</button>
             <button class="btn btn-sm btn-ghost" id="ask-teacher">问老师，还是不懂</button>
           </div>
         </div>`;
-      fb.querySelector('#next').onclick = () => { if (step.origin === 'backtrack') backtrackCount += 1; cursor += 1; paint(); };
+      fb.querySelector('#next').onclick = () => { if (!reviewOnly && step.origin === 'backtrack') backtrackCount += 1; cursor += 1; paint(); };
+      wirePrev(fb);
       wireTeacher(fb.querySelector('#ask-teacher'), fb.querySelector('#teacher-box'), q, topic, myAnswer);
       vib(8);
       return;
     }
 
     // 答错：温和、不刺激，先记录再决定下一步
-    const count = (wrongByTopic.get(q.topicId) || 0) + 1;
-    wrongByTopic.set(q.topicId, count);
+    // V2.1：回看时不重新算连错、不重新插确认题/回溯题，只展示当时的讲解。
     let insert = null;
     let tip = '先把它记下来，等会儿再看一遍。';
-    if (count === 1) {
-      const confirm = pickConfirmQuestion({
-        topicId: q.topicId,
-        questionsByTopic,
-        excludeIds: [...answeredIds, q.id, ...steps.filter((s) => s.q).map((s) => s.q.id)],
-      });
-      if (confirm) {
-        insert = { kind: 'q', q: confirm, confirm: true };
-        tip = '我们换一道同一考点的基础题，确认一下是"手滑"还是"真没懂"。';
+    if (!reviewOnly) {
+      const count = (wrongByTopic.get(q.topicId) || 0) + 1;
+      wrongByTopic.set(q.topicId, count);
+      if (count === 1) {
+        const confirm = pickConfirmQuestion({
+          topicId: q.topicId,
+          questionsByTopic,
+          excludeIds: [...answeredIds, q.id, ...steps.filter((s) => s.q).map((s) => s.q.id)],
+        });
+        if (confirm) {
+          insert = { kind: 'q', q: confirm, confirm: true };
+          tip = '我们换一道同一考点的基础题，确认一下是"手滑"还是"真没懂"。';
+        }
       }
-    }
-    if (count >= 2 && count % 2 === 0 && data) {
-      const diag = diagnose({
-        topicId: q.topicId,
-        deps: data.deps,
-        questionsByTopic,
-        topicById: data.topicById,
-      });
-      if (diag) {
-        insert = { kind: 'backtrack', payload: diag };
-        tip = '发现前置小卡点。退一步，先把下面这块补掉，再回来秒杀它。';
+      if (count >= 2 && count % 2 === 0 && data) {
+        const diag = diagnose({
+          topicId: q.topicId,
+          deps: data.deps,
+          questionsByTopic,
+          topicById: data.topicById,
+        });
+        if (diag) {
+          insert = { kind: 'backtrack', payload: diag };
+          tip = '发现前置小卡点。退一步，先把下面这块补掉，再回来秒杀它。';
+        }
       }
+      if (insert) steps.splice(cursor + 1, 0, insert);
     }
-    if (insert) steps.splice(cursor + 1, 0, insert);
 
     // V2：同考点变式题按钮（答错当场就能换个问法再试一次）；实验室只在
     // labForTopic 有把握时才出现，没有合适演示就干脆不显示（不要推错实验）
@@ -431,6 +513,7 @@ export function renderQuiz(app, root) {
         <div style="margin-top:8px">${explanationHtml(q, topic, myAnswer, false)}</div>
         <div class="teacher-box" id="teacher-box" style="display:none"></div>
         <div class="btn-row">
+          ${prevBtnHtml()}
           <button class="btn btn-warm" id="next">我记住了，下一题</button>
           ${variant ? `<button class="btn" id="variant">来一道变式题</button>` : ''}
           <button class="btn btn-sm btn-ghost" id="ask-teacher">问老师，还是不懂</button>
@@ -438,6 +521,7 @@ export function renderQuiz(app, root) {
         </div>
       </div>`;
     fb.querySelector('#next').onclick = () => { cursor += 1; paint(); };
+    wirePrev(fb);
     if (variant) {
       fb.querySelector('#variant').onclick = () => {
         steps.splice(cursor + 1, 0, { kind: 'q', q: { ...variant, variantOf: q.variantOf || q.id } });
@@ -471,10 +555,12 @@ export function renderQuiz(app, root) {
           </div>` : ''}
         <p style="margin-top:14px">第 2 步：做 ${payload.questions.length} 道最基础的变式题。第 3 步：回到刚才那关重测。</p>
         <div class="btn-row" style="margin-top:16px">
+          ${prevBtnHtml()}
           <button class="btn btn-primary" id="go">开始补 ${payload.questions.length} 题（约 3 分钟）</button>
         </div>
       </section>`;
     root.querySelector('#quit').onclick = quit;
+    wirePrev(root);
     root.querySelector('#go').onclick = () => {
       const qs = payload.questions.map((q) => ({ ...q }));
       steps.splice(cursor + 1, 0, ...qs.map((q) => ({ kind: 'q', q, origin: 'backtrack' })));
@@ -609,6 +695,7 @@ function mountDraft(root, questionId) {
   const dpr = window.devicePixelRatio || 1;
   const storeKey = `zkq_draft_${questionId}`;
   let sized = false;
+  let retryQueued = false;
   let drawing = false;
   let last = null;
   let erasing = false;
@@ -640,7 +727,19 @@ function mountDraft(root, questionId) {
   const sizeCanvas = () => {
     if (sized) return;
     const rect = canvas.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+    if (!rect.width || !rect.height) {
+      // V2.1：渲染瞬间量不到尺寸（布局还没落定）时，用 requestAnimationFrame
+      // 等一帧再量一次、再恢复草稿；只重试一次，之后点开草稿纸或下笔时
+      // sizeCanvas 会再试。重试期间不恢复，避免在 0 宽高画布上画坏草稿。
+      if (!retryQueued) {
+        retryQueued = true;
+        requestAnimationFrame(() => {
+          retryQueued = false;
+          sizeCanvas();
+        });
+      }
+      return;
+    }
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
     ctx.scale(dpr, dpr);
