@@ -10,15 +10,18 @@ export function defaultState() {
   return {
     version: 1,
     createdAt: dayKey(),
-    profile: { name: '', pin: '1234', dailyQuestions: 4 },
+    profile: { name: '', pin: '1234', dailyQuestions: 4, dailyGoalMinutes: 30, onboarded: false },
     streak: { days: 0, lastDate: '', best: 0 },
     points: 0,
     sessions: [],           // {date, subject, minutes, correct, total, points}
     today: null,            // {date, subject, done:boolean}
     subjectCursor: 0,       // 「换一关」轮换位置
-    focus: {},              // subject -> topicId
+    focus: {},              // {subject, grade, topic} 本关主攻（首页显示用）
+    teacherAsks: [],        // V2：“问老师”使用日期列表（只记日期，不记内容），供家长看板统计
+    hintLog: [],            // V2：提示使用记录 [{d: 日期, level: 看到第几级}]，最多 200 条
+    lastSyncAt: null,       // V2：最近一次生成/导入同步口令码的时间（跨设备说明用）
     topicStats: {},         // topicId -> {seen, correct, wrongStreak, shaky, mastered, lastSeen}
-    wrongBook: [],          // {questionId, topicId, subject, count, lastWrong, status}
+    wrongBook: [],          // {questionId, topicId, subject, count, lastWrong, status, myAnswer}
     flashcards: {},         // topicId -> {box, due}
     rewards: [
       { id: 'r1', title: '周末多玩 30 分钟游戏', cost: 120 },
@@ -40,6 +43,8 @@ function merge(base, saved) {
   if (!Array.isArray(out.sessions)) out.sessions = [];
   if (!Array.isArray(out.rewards)) out.rewards = base.rewards;
   if (!Array.isArray(out.redemptions)) out.redemptions = [];
+  if (!Array.isArray(out.teacherAsks)) out.teacherAsks = [];
+  if (!Array.isArray(out.hintLog)) out.hintLog = [];
   if (typeof out.points !== 'number') out.points = 0;
   return out;
 }

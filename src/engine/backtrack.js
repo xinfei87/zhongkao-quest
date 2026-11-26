@@ -108,3 +108,15 @@ export function pickConfirmQuestion({ topicId, questionsByTopic, excludeIds = []
   const basic = pool.filter(isBasic);
   return (basic.length ? basic : pool)[0];
 }
+
+/**
+ * V2 错题变式题：同一考点的另一道题（优先 basic），用来代替“原题重练”。
+ * 答对变式题才算一次有效——背住原题答案是过不了关的。
+ * 没有其他同考点题时返回 null，调用方再回落到原题。
+ */
+export function pickVariantQuestion({ topicId, questionsByTopic, excludeIds = [] }) {
+  const pool = (questionsByTopic.get(topicId) || []).filter((q) => !excludeIds.includes(q.id));
+  if (!pool.length) return null;
+  const basic = pool.filter(isBasic);
+  return (basic.length ? basic : pool)[0];
+}
