@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { judgeNumeric, judgeChoice, judgeShort, judge, inputCount } from '../src/engine/judge.js';
 import { diagnose, buildHardIndex, pickConfirmQuestion } from '../src/engine/backtrack.js';
-import { recordAnswer, buildSession, pickFocusTopic, groupByTopic, completeSession, markAnsweredOnce } from '../src/engine/scheduler.js';
+import { recordAnswer, buildSession, pickFocusTopic, groupByTopic, completeSession, markAnsweredOnce, weekStats, addDailyMinutes } from '../src/engine/scheduler.js';
+import { dayKey, addDays } from '../src/util.js';
 
 test('数值判分：分数、小数、百分数互通', () => {
   assert.equal(judgeNumeric('3/4', ['0.75']), true);
@@ -421,4 +422,80 @@ test('V2.1 看板：掌握数旁边写清口径，正确率单独显示', () => 
   assert.ok(html.includes('100% 正确'));
   const empty = masteryHTML([{ name: '语文', mastered: 0, total: 189, rate: null }]);
   assert.ok(empty.includes('还没练'));
+});
+
+// ---- V2.2 中途退出也计入今日 ----
+test('V2.2 今日：只答题不收关，中途退出也计入今日', () => {
+  const state = { profile: { dailyGoalMinutes: 30 }, sessions: [], today: null, topicStats: {}, wrongBook: [] };
+  const q1 = { id: 'q1', topicId: 'T1', type: 'choice', answer: 'A' };
+  const q2 = { id: 'q2', topicId: 'T1', type: 'choice', answer: 'A' };
+  recordAnswer(state, { subject: 'math', question: q1, correct: true, myAnswer: 'A' });
+  recordAnswer(state, { subject: 'math', question: q2, correct: false, myAnswer: 'B' });
+  const t = computeToday(state, [{ id: 'math', name: '数学' }]);
+  assert.equal(t.total, 2);
+  assert.equal(t.correct, 1);
+  assert.equal(t.rate, 50);
+  assert.equal(t.done, false); // 没收关，不算打卡
+  assert.equal(t.subjectName, '数学');
+  const trend = computeTrend(state, 7);
+  assert.equal(trend[6].total, 2); // 今天是最后一栏
+  const w = weekStats(state, 7);
+  assert.equal(w.total, 2);
+});
+
+test('V2.2 不双倍：收关后 daily 与 sessions 不重复算', () => {
+  const today = dayKey();
+  const yesterday = addDays(today, -1);
+  const state = {
+    profile: { dailyGoalMinutes: 30 },
+    sessions: [
+      { date: today, subject: 'math', minutes: 20, correct: 4, total: 5 },
+      { date: yesterday, subject: 'math', minutes: 10, correct: 2, total: 4 },
+    ],
+    today: { date: today, subject: 'math', done: true },
+    daily: { date: today, total: 5, correct: 4, minutes: 20, subject: 'math' },
+    topicStats: {}, wrongBook: [],
+  };
+  const t = computeToday(state, [{ id: 'math', name: '数学' }]);
+  assert.equal(t.total, 5);
+  assert.equal(t.correct, 4);
+  assert.equal(t.done, true);
+  const w = weekStats(state, 7);
+  assert.equal(w.total, 9); // 今天 5 + 昨天 4，不是 5+5+4
+  assert.equal(w.minutes, 30);
+  assert.equal(w.days, 2); // 今天 + 昨天，两个有练习的日子
+  const trend = computeTrend(state, 7);
+  assert.equal(trend[6].total, 5);
+  assert.equal(trend[5].total, 4);
+});
+
+test('V2.2 兼容旧数据：没有 daily 时回落到 sessions，不报错', () => {
+  const today = dayKey();
+  const state = {
+    profile: { dailyGoalMinutes: 30 },
+    sessions: [{ date: today, subject: 'math', minutes: 20, correct: 3, total: 4 }],
+    today: { date: today, subject: 'math', done: true },
+    topicStats: {}, wrongBook: [],
+    // 注意：没有 daily 字段
+  };
+  const t = computeToday(state, [{ id: 'math', name: '数学' }]);
+  assert.equal(t.total, 4);
+  assert.equal(t.correct, 3);
+  assert.equal(t.done, true);
+  const w = weekStats(state, 7);
+  assert.equal(w.total, 4);
+  assert.equal(w.days, 1);
+});
+
+test('V2.2 分钟：addDailyMinutes 累加；跨天自动清零', () => {
+  const state = { profile: {}, sessions: [], today: null, topicStats: {}, wrongBook: [] };
+  addDailyMinutes(state, 3);
+  addDailyMinutes(state, 2);
+  assert.equal(state.daily.minutes, 5);
+  // 跨天：第二天第一道题就清零重计
+  const tomorrow = addDays(dayKey(), 1);
+  recordAnswer(state, { subject: 'math', question: { id: 'q9', topicId: 'T1', type: 'choice', answer: 'A' }, correct: true, myAnswer: 'A', date: tomorrow });
+  assert.equal(state.daily.date, tomorrow);
+  assert.equal(state.daily.total, 1);
+  assert.equal(state.daily.minutes, 0);
 });
