@@ -1,5 +1,5 @@
 import { loadIndex, loadSubject } from './data.js';
-import { loadState, saveState } from './store/local.js';
+import { loadState, saveState, replaceState } from './store/local.js';
 import { buildSession, pickSubject, groupByTopic, rotateSubject } from './engine/scheduler.js';
 import { pickVariantQuestion } from './engine/backtrack.js';
 import { dayKey, toast } from './util.js';
@@ -45,7 +45,10 @@ const app = {
   },
 
   /** V2.5 全站口令门：账号 test + 网站密码，解开仓库里的共享 Key 包才能进站。
-   * 解开的 Key 存进 zkq_teacher_key（和问老师共用这个键名），登录成功后重新 init 走正常流程。 */
+   * 解开的 Key 存进 zkq_teacher_key（和问老师共用这个键名）；包里带的孩子进度
+   * 快照直接写进本机存档，老师登录后看到的和孩子那台设备上的一样。
+   * 老师在自己设备上做的题只留在他自己设备上，不会传回孩子那台设备。
+   * 登录成功后重新 init 走正常流程。 */
   renderLoginGate(view) {
     view.innerHTML = `
       <section class="card" style="max-width:420px;margin:40px auto;text-align:center">
@@ -73,8 +76,9 @@ const app = {
       packHint.style.display = 'none';
       try {
         const pack = await loadSharedPack();
-        const key = await decryptSharedKey(pack, pwEl.value);
-        saveTeacherKey(localStorage, key);
+        const payload = await decryptSharedKey(pack, pwEl.value);
+        saveTeacherKey(localStorage, payload.key);
+        if (payload.state) this.state = replaceState(payload.state);
         markSiteAuthed(localStorage, dayKey());
         this.init();
       } catch (e) {
