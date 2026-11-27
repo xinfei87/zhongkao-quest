@@ -18,15 +18,20 @@ export const TEACHER_SHARE_DAYS = 7;
 const PREFIX = 'T7-';
 
 /**
- * 把孩子的学习存档脱敏成“可分享的快照”：
- * - 家长 PIN 换成随机数（老师那台设备上的家长入口打不开，也不会拿到真的 PIN；
- *   1234 这种默认 PIN 更不能留，否则老师随手一试就进了家长入口）。
- * - Gemini Key 不在 state 里，这里再防一手。
+ * 把孩子的学习存档脱敏成“可分享的快照”。
+ * - Key 不在 state 里，这里再防一手。
+ * - PIN 的处理分两种（调用方选）：
+ *   a) 默认（老师分享码）：PIN 换成随机数。分享码只是 base64 编码、没有加密，
+ *      真 PIN 绝不能放进去；老师拿到码也打不开家长入口。
+ *   b) keepPin:true（共享包）：保留真 PIN。包是加密的，家长在手机/电脑登录后
+ *      用这个 PIN 就能进家长入口（看家长看板、改设置、导同步口令码）；老师不知道
+ *      PIN，还是进不去。但要说明：有网站密码的人理论上能从公开的包文件里解出
+ *      PIN，和 Key 一个待遇（用户已接受这个前提）。
  * - 其余（做题记录、错题本、积分、掌握度）原样保留，老师登录后看到的和孩子这台设备上一样。
  */
-export function stripStateForShare(state) {
+export function stripStateForShare(state, opts = {}) {
   const stripped = JSON.parse(JSON.stringify(state || {}));
-  if (stripped.profile) {
+  if (stripped.profile && !opts.keepPin) {
     stripped.profile.pin = String(Math.floor(10000000 + Math.random() * 90000000));
   }
   delete stripped.teacherKey;

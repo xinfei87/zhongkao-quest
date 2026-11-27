@@ -135,7 +135,7 @@ export function renderParent(app, root) {
     <h2 class="sec-title">共享 Key</h2>
     ${hasTeacherKey(localStorage) ? `
     <div class="card">
-      <p class="hint">给老师开一个账号：设一个网站密码，站会把本机的 Key 和孩子现在的进度（做题记录、错题本、积分）一起加密成一串密文。老师打开网站、输账号 test 和这个密码就能进，看到的和孩子这台设备上的一模一样；不知道密码的人拿到密文也没用。换密码、或想让老师看到孩子最新的进度，重新生成一次包发给管理员就行。</p>
+      <p class="hint">给老师开一个账号：设一个网站密码，站会把本机的 Key 和孩子现在的进度（做题记录、错题本、积分）一起加密成一串密文。老师打开网站、输账号 test 和这个密码就能进，看到的和孩子这台设备上的一模一样；你自己在手机/电脑上登录后，用家长 PIN 也能进家长入口；不知道密码的人拿到密文也没用。换密码、或想让老师看到孩子最新的进度，重新生成一次包发给管理员就行。</p>
       <div class="btn-row" style="margin-top:10px">
         <input class="answer-input" id="share-pw1" type="password" placeholder="网站密码（至少 6 位）" style="flex:1" autocomplete="new-password" />
         <input class="answer-input" id="share-pw2" type="password" placeholder="再输一次" style="flex:1" autocomplete="new-password" />
@@ -311,7 +311,7 @@ export function renderParent(app, root) {
       const key = localStorage.getItem(TEACHER_KEY_LS)?.trim();
       if (!key) return toast('本机还没填 Key');
       try {
-        const pack = await encryptSharedKey(key, pw1, stripStateForShare(s));
+        const pack = await encryptSharedKey(key, pw1, stripStateForShare(s, { keepPin: true }));
         root.querySelector('#share-pack').value = JSON.stringify(pack);
         root.querySelector('#share-pw1').value = '';
         root.querySelector('#share-pw2').value = '';

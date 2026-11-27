@@ -18,8 +18,9 @@
  *   口令就是解密它们的钥匙；没口令的人拿到密文也没用；有口令的人才能
  *   解出 Key 和存档（用户已接受：有口令的人理论上能把 Key 抠出来，
  *   简易版只给信任的老师）。
- * - 快照里家长 PIN 被换成随机数（见 teacherShare.js 的 stripStateForShare），
- *   老师那台设备上的家长入口打不开，也拿不到真的 PIN。
+ * - 快照里保留家长真 PIN（见 teacherShare.js 的 stripStateForShare，keepPin:true）：
+ *   家长在手机/电脑登录后用这个 PIN 就能进家长入口；老师不知道 PIN，进不去。
+ *   但要说明：有网站密码的人理论上能从公开的包文件里解出 PIN，和 Key 一个待遇。
  *
  * 加密：PBKDF2（SHA-256，10 万次，随机 16 字节 salt）派生 → AES-GCM 256。
  * 明文是 JSON {key, state}，先用 deflate 压一下（存档几十 KB，压完小得多；
