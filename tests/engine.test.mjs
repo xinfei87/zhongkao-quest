@@ -617,3 +617,61 @@ test('V2.4 追问走接口：发出的 contents 交替、404 回落；空 thread
   assert.equal(forced.cached, false);
   assert.equal(calls, 2);
 });
+
+/* ---------- V2.5 全站口令 + 共享 Key ---------- */
+import { SITE_ACCOUNT, isSiteAccount, isSiteAuthed, markSiteAuthed, encryptSharedKey, decryptSharedKey, loadSharedPack } from '../src/engine/siteauth.js';
+
+const FAKE_KEY = 'AQ.test-teacher-key-1234567890abcdef';
+
+test('V2.5 共享 Key：加密→解密 round-trip（对口令解出原 Key）', async () => {
+  const pack = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123');
+  assert.equal(pack.v, 1);
+  assert.ok(pack.salt && pack.iv && pack.data);
+  // 包是纯 JSON，能直接存进 data/shared-key.json
+  assert.equal(JSON.parse(JSON.stringify(pack)).data, pack.data);
+  const back = await decryptSharedKey(pack, 'teacher-pw-123');
+  assert.equal(back, FAKE_KEY);
+  // 两次加密 salt/iv 不同（随机），密文不一样但都能解
+  const pack2 = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123');
+  assert.notEqual(pack2.data, pack.data);
+  assert.equal(await decryptSharedKey(pack2, 'teacher-pw-123'), FAKE_KEY);
+});
+
+test('V2.5 共享 Key：错口令解密失败；篡改密文解密失败', async () => {
+  const pack = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123');
+  await assert.rejects(decryptSharedKey(pack, 'wrong-password'), /口令不对或包已损坏/);
+  const tampered = { ...pack, data: pack.data.slice(0, -4) + 'AAAA' };
+  await assert.rejects(decryptSharedKey(tampered, 'teacher-pw-123'), /口令不对或包已损坏/);
+  // 解出的不是 AQ. 开头的 Key 也按口令不对处理（不是把原始错误往外抛）
+  const bad = await encryptSharedKey('hello-not-a-key', 'teacher-pw-123');
+  await assert.rejects(decryptSharedKey(bad, 'teacher-pw-123'), /口令不对或包已损坏/);
+});
+
+test('V2.5 共享 Key：包格式不对报“包还没生成/包已损坏”，不抛未处理异常', async () => {
+  await assert.rejects(decryptSharedKey(null, 'x'), /包还没生成/);
+  await assert.rejects(decryptSharedKey({ v: 1, salt: '', iv: '', data: '' }, 'x'), /包还没生成/);
+  await assert.rejects(decryptSharedKey({ v: 1 }, 'x'), /包还没生成/);
+  await assert.rejects(decryptSharedKey({ v: 1, salt: '!!!', iv: '!!!', data: '!!!' }, 'x'), /包已损坏/);
+  // loadSharedPack：404 和取不到都按“包还没生成”报
+  const notFound = async () => ({ ok: false, status: 404 });
+  await assert.rejects(loadSharedPack(notFound), /包还没生成/);
+  const throwing = async () => { throw new Error('network down'); };
+  await assert.rejects(loadSharedPack(throwing), /包还没生成/);
+  const good = async () => ({ ok: true, json: async () => ({ v: 1, salt: 'c2FsdA==', iv: 'aXY=', data: 'ZGF0YQ==' }) });
+  const pack = await loadSharedPack(good);
+  assert.equal(pack.v, 1);
+});
+
+test('V2.5 全站口令：账号必须是 ceshi；登录标记读写', () => {
+  assert.equal(SITE_ACCOUNT, 'ceshi');
+  assert.equal(isSiteAccount('ceshi'), true);
+  assert.equal(isSiteAccount(' ceshi '), true);
+  assert.equal(isSiteAccount('teacher'), false);
+  assert.equal(isSiteAccount(''), false);
+  assert.equal(isSiteAccount(null), false);
+  const storage = memStore();
+  assert.equal(isSiteAuthed(storage), false);
+  markSiteAuthed(storage, '2026-11-27');
+  assert.equal(isSiteAuthed(storage), true);
+  assert.equal(storage.getItem('zkq_auth'), '2026-11-27');
+});
