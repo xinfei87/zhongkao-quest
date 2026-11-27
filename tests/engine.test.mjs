@@ -146,7 +146,7 @@ test('收关：连击按天累加，同日不重复加', () => {
 import { labForTopic } from '../src/labs.js';
 import { buildHintLevels } from '../src/engine/hints.js';
 import { pickVariantQuestion } from '../src/engine/backtrack.js';
-import { buildTeacherUserText, TEACHER_SYSTEM_PROMPT, TEACHER_DEFAULT_MODEL, TEACHER_FALLBACK_MODEL, askTeacher } from '../src/engine/teacher.js';
+import { buildTeacherUserText, TEACHER_SYSTEM_PROMPT, TEACHER_DEFAULT_MODEL, TEACHER_FALLBACK_MODEL, TEACHER_MAX_STUDENT_TURNS, askTeacher, askTeacherFollowUp, buildTeacherFollowUpContents, buildTeacherFollowUpSystemPrompt, serializeTeacherThread, parseTeacherThread, readTeacherThread, writeTeacherThread } from '../src/engine/teacher.js';
 import { createTeacherShare, decodeTeacherShare } from '../src/store/teacherShare.js';
 import { encodeState } from '../src/store/sync.js';
 import { computeToday, computeTrend, computeTeacherUse, computeWeakTop, masteryHTML } from '../src/views/dashboard.js';
@@ -498,4 +498,122 @@ test('V2.2 分钟：addDailyMinutes 累加；跨天自动清零', () => {
   assert.equal(state.daily.date, tomorrow);
   assert.equal(state.daily.total, 1);
   assert.equal(state.daily.minutes, 0);
+});
+
+/* ================= V2.4 问老师多轮讨论 ================= */
+
+test('V2.4 讨论 thread：序列化/反序列化 round-trip；脏数据回 []', () => {
+  const storage = memStore();
+  const thread = [
+    { role: 'teacher', text: '先想第一步是什么。' },
+    { role: 'user', text: '我觉得先看角A和角C。' },
+    { role: 'teacher', text: '对，它们是对角。' },
+  ];
+  writeTeacherThread(storage, 'q1', thread);
+  assert.deepEqual(readTeacherThread(storage, 'q1'), thread);
+  // 序列化/反序列化本身 round-trip
+  assert.deepEqual(parseTeacherThread(serializeTeacherThread(thread)), thread);
+  // 脏数据：不是 JSON、不是数组、role 非法、缺 text，都回 [] 或被过滤
+  assert.deepEqual(parseTeacherThread('不是 json'), []);
+  assert.deepEqual(parseTeacherThread('{"role":"user"}'), []);
+  assert.deepEqual(parseTeacherThread(JSON.stringify([{ role: 'other', text: 'x' }, { role: 'user', text: 'y' }])), [{ role: 'user', text: 'y' }]);
+  // 没存过的题回 []
+  assert.deepEqual(readTeacherThread(storage, '没问过的题'), []);
+  // 别的题的 thread 互不干扰
+  writeTeacherThread(storage, 'q2', [{ role: 'teacher', text: '另一题' }]);
+  assert.equal(readTeacherThread(storage, 'q1').length, 3);
+  assert.equal(readTeacherThread(storage, 'q2').length, 1);
+});
+
+test('V2.4 追问：contents 是 user/model 交替、包含老师原话和学生新回的话', () => {
+  const q = { id: 'q1', prompt: '平行四边形ABCD中，∠A=115°，求∠C。', answer: '115°', explanation: '平行四边形对角相等。' };
+  const thread = [
+    { role: 'teacher', text: '先想第一步是什么。' },
+    { role: 'user', text: '我觉得先看角A和角C。' },
+    { role: 'teacher', text: '对，角A和角C是对角。' },
+    { role: 'user', text: '那下一步是不是对角相等，角C也是115度？' },
+  ];
+  const contents = buildTeacherFollowUpContents({ question: q, topicName: '平行四边形性质', myAnswer: '9', thread });
+  // 严格交替 user/model，且以 user 开头、user 结尾（学生刚回的话）
+  const roles = contents.map((c) => c.role);
+  assert.equal(roles[0], 'user');
+  assert.equal(roles[roles.length - 1], 'user');
+  for (let i = 1; i < roles.length; i++) assert.notEqual(roles[i], roles[i - 1]);
+  const allText = contents.map((c) => c.parts[0].text).join('\n');
+  // 含原题、含老师第一轮原话、含学生新回的话、含学生当初选错的答案
+  assert.ok(allText.includes('平行四边形ABCD'));
+  assert.ok(allText.includes('先想第一步是什么。'));
+  assert.ok(allText.includes('那下一步是不是对角相等'));
+  assert.ok(allText.includes('学生选的答案：9'));
+  // 同 role 连续出现时合并，不发两条相邻同 role
+  const merged = buildTeacherFollowUpContents({
+    question: q, topicName: '平行四边形性质', myAnswer: '9',
+    thread: [{ role: 'teacher', text: '第一句。' }, { role: 'teacher', text: '第二句。' }, { role: 'user', text: '懂了。' }],
+  });
+  assert.deepEqual(merged.map((c) => c.role), ['user', 'model', 'user']);
+  assert.ok(merged[1].parts[0].text.includes('第一句。') && merged[1].parts[0].text.includes('第二句。'));
+});
+
+test('V2.4 追问：system prompt 还是原来的老师人设；回够 6 次改给完整做法', () => {
+  const p2 = buildTeacherFollowUpSystemPrompt(2);
+  // 原人设还在：一次只讲一步、不直接甩答案
+  assert.ok(p2.includes('一次只讲一步'));
+  assert.ok(p2.includes('不要一上来就把完整答案甩出来'));
+  // 追问规则在：答对夸、答错给更小提示
+  assert.ok(p2.includes('答对了先夸一句'));
+  assert.ok(p2.includes('更小的提示'));
+  // 没到 6 次不给完整做法
+  assert.ok(!p2.includes('直接给完整做法'));
+  const p6 = buildTeacherFollowUpSystemPrompt(TEACHER_MAX_STUDENT_TURNS);
+  assert.ok(p6.includes('直接给完整做法'));
+  assert.ok(p6.includes('不要再反问'));
+  assert.equal(TEACHER_MAX_STUDENT_TURNS, 6);
+});
+
+test('V2.4 追问走接口：发出的 contents 交替、404 回落；空 thread 抛错；force 跳过缓存', async () => {
+  const storage = memStore();
+  storage.setItem('zkq_teacher_key', 'test-key');
+  const q = { id: 'q1', prompt: '题', answer: 'A', explanation: '略' };
+  let bodies = [];
+  const fakeFetch = async (url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    if (url.includes(TEACHER_DEFAULT_MODEL)) return { ok: false, status: 404 };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ candidates: [{ content: { parts: [{ text: '对，就是对角相等。' }] } }] }),
+    };
+  };
+  const thread = [
+    { role: 'teacher', text: '先想第一步是什么。' },
+    { role: 'user', text: '先看角A和角C。' },
+  ];
+  const r = await askTeacherFollowUp({ question: q, topicName: '考点', myAnswer: 'B', thread, storage, fetchImpl: fakeFetch });
+  assert.equal(r.text, '对，就是对角相等。');
+  assert.equal(r.cached, false);
+  // 404 回落调了两次；最后一次请求的 contents 严格交替
+  assert.equal(bodies.length, 2);
+  const roles = bodies[1].contents.map((c) => c.role);
+  assert.deepEqual(roles, ['user', 'model', 'user']);
+  assert.ok(bodies[1].systemInstruction.parts[0].text.includes('一次只讲一步'));
+  // 空 thread、末尾不是学生回话，都抛错，不发请求
+  await assert.rejects(askTeacherFollowUp({ question: q, topicName: '考点', thread: [], storage, fetchImpl: fakeFetch }), /讨论记录不完整/);
+  await assert.rejects(askTeacherFollowUp({ question: q, topicName: '考点', thread: [{ role: 'teacher', text: 'x' }], storage, fetchImpl: fakeFetch }), /讨论记录不完整/);
+  // force：有缓存也重新问（“换个问法再问一次”靠它）
+  const storage2 = memStore();
+  storage2.setItem('zkq_teacher_key', 'k');
+  let calls = 0;
+  const countingFetch = async () => {
+    calls += 1;
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: '新讲法。' }] } }] }) };
+  };
+  const first = await askTeacher({ question: q, topicName: '考点', storage: storage2, fetchImpl: countingFetch });
+  assert.equal(first.text, '新讲法。');
+  assert.equal(calls, 1);
+  const cached = await askTeacher({ question: q, topicName: '考点', storage: storage2, fetchImpl: countingFetch });
+  assert.equal(cached.cached, true);
+  assert.equal(calls, 1);
+  const forced = await askTeacher({ question: q, topicName: '考点', storage: storage2, fetchImpl: countingFetch, force: true });
+  assert.equal(forced.cached, false);
+  assert.equal(calls, 2);
 });

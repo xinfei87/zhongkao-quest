@@ -306,6 +306,11 @@ h1, h2, h3, p { margin: 0; }
   background: var(--primary-weak); border: 1px solid #BFDBFE;
   font-size: 15px; line-height: 1.7;
 }
+/* V2.4 问老师多轮讨论：老师的气泡白底、学生回的话暖黄底，一眼分清谁说的 */
+.teacher-thread .msg-teacher { background: #FFFFFF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+.teacher-thread .msg-teacher:first-child { margin-top: 0; }
+.teacher-thread .msg-student { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+.teacher-thread .msg-teacher p, .teacher-thread .msg-student p { margin: 0; }
 /* 30 分钟到点提示条 */
 .timeup-banner {
   margin-bottom: 12px; padding: 10px 14px; border-radius: var(--radius-sm);
