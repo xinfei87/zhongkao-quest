@@ -12,7 +12,7 @@ import { renderRewards } from './views/rewards.js';
 import { renderParent } from './views/parent.js';
 import { renderTeacher } from './views/teacher.js';
 import { isSiteAuthed, markSiteAuthed, isSiteAccount, decryptSharedKey, loadSharedPack } from './engine/siteauth.js';
-import { hasTeacherKey, saveTeacherKey } from './engine/teacher.js';
+import { hasTeacherKey, saveTeacherKey, isValidTeacherKey } from './engine/teacher.js';
 
 const app = {
   state: loadState(),
@@ -48,7 +48,10 @@ const app = {
    * 解开的 Key 存进 zkq_teacher_key（和问老师共用这个键名）；包里带的孩子进度
    * 快照直接写进本机存档，老师登录后看到的和孩子那台设备上的一样。
    * 老师在自己设备上做的题只留在他自己设备上，不会传回孩子那台设备。
-   * 登录成功后重新 init 走正常流程。 */
+   * 登录成功后重新 init 走正常流程。
+   * V2.7：门上加了“我是家长，重新贴 Key”——iPad 上 Key 丢了（清数据、换浏览器）
+   * 会被这扇门挡在家长入口外面，Key 贴不进去，死结。家长在这里直接贴 Key，
+   * 存进本机就进站，不用等共享包；孩子的记录还在不在，进来一眼就能看见。 */
   renderLoginGate(view) {
     view.innerHTML = `
       <section class="card" style="max-width:420px;margin:40px auto;text-align:center">
@@ -59,6 +62,13 @@ const app = {
         <button class="btn btn-primary" id="site-login" style="margin-top:12px">进入</button>
         <p class="hint" id="site-login-msg" style="margin-top:10px;min-height:18px"></p>
         <p class="hint" id="site-pack-hint" style="display:none">共享 Key 包还没生成：请先在 iPad 的家长入口 → 共享 Key 里生成，生成后把密文发给管理员放进仓库。</p>
+        <p class="hint" style="margin-top:14px"><a href="javascript:void(0)" id="site-rekey-link">我是家长，Key 丢了？重新贴 Key</a></p>
+        <div id="site-rekey" style="display:none;margin-top:10px">
+          <input class="answer-input" id="site-rekey-input" type="password" placeholder="粘贴 Gemini Key（以 AQ. 开头）" autocomplete="off" style="text-align:center" />
+          <button class="btn" id="site-rekey-save" style="margin-top:10px">保存 Key 并进入</button>
+          <p class="hint" id="site-rekey-msg" style="margin-top:8px;min-height:18px"></p>
+          <p class="hint">Key 只存在这台设备上，不会上传。贴好直接进站，孩子的记录还在不在，进来就能看见。</p>
+        </div>
       </section>`;
     const accountEl = view.querySelector('#site-account');
     const pwEl = view.querySelector('#site-password');
@@ -93,6 +103,23 @@ const app = {
     accountEl.onkeydown = (e) => { if (e.key === 'Enter') pwEl.focus(); };
     pwEl.onkeydown = (e) => { if (e.key === 'Enter') login(); };
     accountEl.focus();
+    // V2.7 家长自救：Key 丢了直接在这里重贴，存进本机就进站。
+    const rekeyLink = view.querySelector('#site-rekey-link');
+    const rekeyBox = view.querySelector('#site-rekey');
+    const rekeyInput = view.querySelector('#site-rekey-input');
+    const rekeySave = view.querySelector('#site-rekey-save');
+    const rekeyMsg = view.querySelector('#site-rekey-msg');
+    rekeyLink.onclick = () => { rekeyBox.style.display = 'block'; rekeyInput.focus(); };
+    const saveKey = () => {
+      if (!isValidTeacherKey(rekeyInput.value)) {
+        rekeyMsg.textContent = '这串不像 Gemini Key（要以 AQ. 开头），请检查是不是复制全了';
+        return;
+      }
+      saveTeacherKey(localStorage, rekeyInput.value);
+      this.init();
+    };
+    rekeySave.onclick = saveKey;
+    rekeyInput.onkeydown = (e) => { if (e.key === 'Enter') saveKey(); };
   },
 
   bindShell() {
