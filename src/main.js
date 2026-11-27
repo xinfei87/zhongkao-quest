@@ -44,7 +44,7 @@ const app = {
     this.registerSW();
   },
 
-  /** V2.5 全站口令门：账号 ceshi + 网站密码，解开仓库里的共享 Key 包才能进站。
+  /** V2.5 全站口令门：账号 test + 网站密码，解开仓库里的共享 Key 包才能进站。
    * 解开的 Key 存进 zkq_teacher_key（和问老师共用这个键名），登录成功后重新 init 走正常流程。 */
   renderLoginGate(view) {
     view.innerHTML = `

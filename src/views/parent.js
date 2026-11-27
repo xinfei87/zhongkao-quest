@@ -135,7 +135,7 @@ export function renderParent(app, root) {
     <h2 class="sec-title">共享 Key</h2>
     ${hasTeacherKey(localStorage) ? `
     <div class="card">
-      <p class="hint">给老师开问老师用的：设一个网站密码，站会把本机的 Key 加密成一串密文。知道密码的人打开网站、输账号 ceshi 和密码就能用问老师；不知道密码的人拿到密文也没用。换密码要重新生成一次包。</p>
+      <p class="hint">给老师开问老师用的：设一个网站密码，站会把本机的 Key 加密成一串密文。知道密码的人打开网站、输账号 test 和密码就能用问老师；不知道密码的人拿到密文也没用。换密码要重新生成一次包。</p>
       <div class="btn-row" style="margin-top:10px">
         <input class="answer-input" id="share-pw1" type="password" placeholder="网站密码（至少 6 位）" style="flex:1" autocomplete="new-password" />
         <input class="answer-input" id="share-pw2" type="password" placeholder="再输一次" style="flex:1" autocomplete="new-password" />

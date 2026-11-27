@@ -662,10 +662,10 @@ test('V2.5 共享 Key：包格式不对报“包还没生成/包已损坏”，�
   assert.equal(pack.v, 1);
 });
 
-test('V2.5 全站口令：账号必须是 ceshi；登录标记读写', () => {
-  assert.equal(SITE_ACCOUNT, 'ceshi');
-  assert.equal(isSiteAccount('ceshi'), true);
-  assert.equal(isSiteAccount(' ceshi '), true);
+test('V2.5 全站口令：账号必须是 test；登录标记读写', () => {
+  assert.equal(SITE_ACCOUNT, 'test');
+  assert.equal(isSiteAccount('test'), true);
+  assert.equal(isSiteAccount(' test '), true);
   assert.equal(isSiteAccount('teacher'), false);
   assert.equal(isSiteAccount(''), false);
   assert.equal(isSiteAccount(null), false);

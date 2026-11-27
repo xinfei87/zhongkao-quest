@@ -14,7 +14,7 @@
  * 用 WebCrypto（crypto.subtle）：浏览器要 HTTPS 才能用，GitHub Pages 是 HTTPS；
  * Node 19+ 自带 globalThis.crypto，单测可以直接跑。
  */
-export const SITE_ACCOUNT = 'ceshi';
+export const SITE_ACCOUNT = 'test';
 export const SITE_AUTH_LS = 'zkq_auth';
 export const PBKDF2_ITERATIONS = 100000;
 
@@ -39,7 +39,7 @@ export function b64decode(str) {
   return bytes.buffer;
 }
 
-/** 账号必须是 ceshi（写死常量） */
+/** 账号必须是 test（写死常量） */
 export function isSiteAccount(account) {
   return (account ?? '').trim() === SITE_ACCOUNT;
 }
