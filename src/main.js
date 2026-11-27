@@ -11,6 +11,8 @@ import { renderMe } from './views/me.js';
 import { renderRewards } from './views/rewards.js';
 import { renderParent } from './views/parent.js';
 import { renderTeacher } from './views/teacher.js';
+import { isSiteAuthed, markSiteAuthed, isSiteAccount, decryptSharedKey, loadSharedPack } from './engine/siteauth.js';
+import { hasTeacherKey, saveTeacherKey } from './engine/teacher.js';
 
 const app = {
   state: loadState(),
@@ -22,6 +24,12 @@ const app = {
 
   async init() {
     const view = document.getElementById('view');
+    // V2.5 全站口令门：没登录过、且本机没贴过 Key 时，先登录再进站。
+    // 已登录过（zkq_auth）或本机已贴 Key（iPad）直接进站，不拦孩子做题。
+    if (!isSiteAuthed(localStorage) && !hasTeacherKey(localStorage)) {
+      this.renderLoginGate(view);
+      return;
+    }
     view.innerHTML = '<p class="hint" style="padding:40px 0;text-align:center">正在准备今天的关卡…</p>';
     try {
       this.index = await loadIndex();
@@ -34,6 +42,53 @@ const app = {
     this.bindShell();
     this.routeFromHash();
     this.registerSW();
+  },
+
+  /** V2.5 全站口令门：账号 ceshi + 网站密码，解开仓库里的共享 Key 包才能进站。
+   * 解开的 Key 存进 zkq_teacher_key（和问老师共用这个键名），登录成功后重新 init 走正常流程。 */
+  renderLoginGate(view) {
+    view.innerHTML = `
+      <section class="card" style="max-width:420px;margin:40px auto;text-align:center">
+        <h1 style="font-size:20px;margin-bottom:6px">每日一关 · 初三基础闯关</h1>
+        <p class="hint">请输入账号和密码进入。账号和密码由家长发给老师。</p>
+        <input class="answer-input" id="site-account" placeholder="账号" autocomplete="username" style="margin-top:16px;text-align:center" />
+        <input class="answer-input" id="site-password" type="password" placeholder="密码" autocomplete="current-password" style="margin-top:10px;text-align:center" />
+        <button class="btn btn-primary" id="site-login" style="margin-top:12px">进入</button>
+        <p class="hint" id="site-login-msg" style="margin-top:10px;min-height:18px"></p>
+        <p class="hint" id="site-pack-hint" style="display:none">共享 Key 包还没生成：请先在 iPad 的家长入口 → 共享 Key 里生成，生成后把密文发给管理员放进仓库。</p>
+      </section>`;
+    const accountEl = view.querySelector('#site-account');
+    const pwEl = view.querySelector('#site-password');
+    const btn = view.querySelector('#site-login');
+    const msg = view.querySelector('#site-login-msg');
+    const packHint = view.querySelector('#site-pack-hint');
+    const login = async () => {
+      if (!isSiteAccount(accountEl.value)) {
+        msg.textContent = '账号不对';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = '正在验证…';
+      msg.textContent = '';
+      packHint.style.display = 'none';
+      try {
+        const pack = await loadSharedPack();
+        const key = await decryptSharedKey(pack, pwEl.value);
+        saveTeacherKey(localStorage, key);
+        markSiteAuthed(localStorage, dayKey());
+        this.init();
+      } catch (e) {
+        const m = e?.message || '验证失败';
+        if (m === '共享 Key 包还没生成') packHint.style.display = 'block';
+        msg.textContent = m === '口令不对或包已损坏' ? '密码不对或共享包有问题' : m;
+        btn.disabled = false;
+        btn.textContent = '进入';
+      }
+    };
+    btn.onclick = login;
+    accountEl.onkeydown = (e) => { if (e.key === 'Enter') pwEl.focus(); };
+    pwEl.onkeydown = (e) => { if (e.key === 'Enter') login(); };
+    accountEl.focus();
   },
 
   bindShell() {
