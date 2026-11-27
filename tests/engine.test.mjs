@@ -670,6 +670,10 @@ test('V2.5 快照脱敏：PIN 被换掉、Key 不进快照，错题本留着', (
   assert.equal(stripped.points, 250);
   // 两次脱敏 PIN 各不相同（随机）
   assert.notEqual(stripStateForShare(FAKE_STATE).profile.pin, stripped.profile.pin);
+  // 共享包（keepPin:true）保留真 PIN：家长在手机/电脑登录后用这个 PIN 进家长入口
+  const packed = stripStateForShare(FAKE_STATE, { keepPin: true });
+  assert.equal(packed.profile.pin, '1234');
+  assert.equal(packed.wrongBook.length, 1);
 });
 
 test('V2.5 共享 Key：错口令解密失败；篡改密文解密失败', async () => {
