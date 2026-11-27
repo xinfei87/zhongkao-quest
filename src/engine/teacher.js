@@ -41,6 +41,14 @@ export function hasTeacherKey(storage) {
   }
 }
 
+/** Key 看起来像 Gemini Key：去空格后以 AQ. 开头、长度大于 20。
+ * 登录页“重新贴 Key”用这条口径；解密包里是同一条（见 siteauth.js）。
+ * 注意：这只是格式检查，不是联网验证——贴错 Key 进站后问老师会报 NO_KEY/HTTP_401。 */
+export function isValidTeacherKey(key) {
+  const k = typeof key === 'string' ? key.trim() : '';
+  return k.startsWith('AQ.') && k.length > 20;
+}
+
 /** 只给家长看 Key 的末 4 位（**** + 后 4 位），完整 Key 永远不显示 */
 export function getTeacherKeySuffix(storage) {
   try {

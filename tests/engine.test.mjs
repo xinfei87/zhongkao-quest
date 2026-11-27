@@ -146,7 +146,7 @@ test('收关：连击按天累加，同日不重复加', () => {
 import { labForTopic } from '../src/labs.js';
 import { buildHintLevels } from '../src/engine/hints.js';
 import { pickVariantQuestion } from '../src/engine/backtrack.js';
-import { buildTeacherUserText, TEACHER_SYSTEM_PROMPT, TEACHER_DEFAULT_MODEL, TEACHER_FALLBACK_MODEL, TEACHER_MAX_STUDENT_TURNS, askTeacher, askTeacherFollowUp, buildTeacherFollowUpContents, buildTeacherFollowUpSystemPrompt, serializeTeacherThread, parseTeacherThread, readTeacherThread, writeTeacherThread } from '../src/engine/teacher.js';
+import { buildTeacherUserText, TEACHER_SYSTEM_PROMPT, TEACHER_DEFAULT_MODEL, TEACHER_FALLBACK_MODEL, TEACHER_MAX_STUDENT_TURNS, askTeacher, askTeacherFollowUp, buildTeacherFollowUpContents, buildTeacherFollowUpSystemPrompt, serializeTeacherThread, parseTeacherThread, readTeacherThread, writeTeacherThread, isValidTeacherKey } from '../src/engine/teacher.js';
 import { createTeacherShare, decodeTeacherShare } from '../src/store/teacherShare.js';
 import { encodeState } from '../src/store/sync.js';
 import { computeToday, computeTrend, computeTeacherUse, computeWeakTop, masteryHTML } from '../src/views/dashboard.js';
@@ -713,4 +713,13 @@ test('V2.5 全站口令：账号必须是 test；登录标记读写', () => {
   markSiteAuthed(storage, '2026-11-27');
   assert.equal(isSiteAuthed(storage), true);
   assert.equal(storage.getItem('zkq_auth'), '2026-11-27');
+});
+
+test('V2.7 登录页重新贴 Key：只有 AQ. 开头、够长的串才算 Key', () => {
+  assert.equal(isValidTeacherKey(`AQ.${'x'.repeat(30)}`), true);
+  assert.equal(isValidTeacherKey(`  AQ.${'x'.repeat(30)}  `), true);
+  assert.equal(isValidTeacherKey('AIzaSyAbcdefghijklmnopqrstuvwxyz123456'), false);
+  assert.equal(isValidTeacherKey('AQ.太短'), false);
+  assert.equal(isValidTeacherKey(''), false);
+  assert.equal(isValidTeacherKey(null), false);
 });
