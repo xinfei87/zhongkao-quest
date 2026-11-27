@@ -241,7 +241,7 @@ test('V2 问老师：只传题目相关内容，不传个人信息；系统提�
   assert.ok(!text.includes('小飞') && !text.includes('学校'));
   assert.ok(TEACHER_SYSTEM_PROMPT.includes('一次只讲一步'));
   assert.ok(TEACHER_SYSTEM_PROMPT.includes('150'));
-  assert.equal(TEACHER_DEFAULT_MODEL, 'gemini-2.5-flash-lite');
+  assert.equal(TEACHER_DEFAULT_MODEL, 'gemini-3.5-flash-lite');
   assert.equal(TEACHER_FALLBACK_MODEL, 'gemini-flash-lite-latest');
 });
 
@@ -260,7 +260,7 @@ test('V2 问老师：默认模型 404 时改调回落模型；第二次读缓存
   let calls = [];
   const fakeFetch = async (url) => {
     calls.push(url);
-    if (url.includes('gemini-2.5-flash-lite')) return { ok: false, status: 404 };
+    if (url.includes(TEACHER_DEFAULT_MODEL)) return { ok: false, status: 404 };
     return {
       ok: true,
       status: 200,
@@ -272,7 +272,7 @@ test('V2 问老师：默认模型 404 时改调回落模型；第二次读缓存
   assert.equal(r1.text, '先想第一步是什么。');
   assert.equal(r1.cached, false);
   assert.equal(calls.length, 2);
-  assert.ok(calls[0].includes('gemini-2.5-flash-lite') && calls[1].includes('gemini-flash-lite-latest'));
+  assert.ok(calls[0].includes(TEACHER_DEFAULT_MODEL) && calls[1].includes('gemini-flash-lite-latest'));
   const r2 = await askTeacher({ question: q, topicName: '考点', myAnswer: 'B', storage, fetchImpl: fakeFetch });
   assert.equal(r2.cached, true);
   assert.equal(calls.length, 2);

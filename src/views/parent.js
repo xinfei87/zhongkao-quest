@@ -122,7 +122,7 @@ export function renderParent(app, root) {
       </div>
       <p class="hint" style="margin-top:8px" id="ai-status">${hasTeacherKey(localStorage) ? `已填写：${esc(getTeacherKeySuffix(localStorage))}` : '未填写'}</p>
       <div class="btn-row" style="margin-top:10px">
-        <input class="answer-input" id="ai-model" placeholder="模型（默认 gemini-2.5-flash-lite）" style="flex:2" value="${esc(getTeacherModel(localStorage))}" />
+        <input class="answer-input" id="ai-model" placeholder="模型（默认 gemini-3.5-flash-lite）" style="flex:2" value="${esc(getTeacherModel(localStorage))}" />
         <button class="btn btn-sm" id="ai-model-save">保存模型</button>
       </div>
       <p class="hint" style="margin-top:8px">取 Key 的官方页面：<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>（免费版就行，不用 Pro）。默认模型 ${esc(TEACHER_DEFAULT_MODEL)}，404 时自动改调 gemini-flash-lite-latest。</p>

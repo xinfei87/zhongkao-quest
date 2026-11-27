@@ -12,10 +12,12 @@
 export const TEACHER_KEY_LS = 'zkq_teacher_key';
 export const TEACHER_MODEL_LS = 'zkq_teacher_model';
 export const TEACHER_CACHE_PREFIX = 'zkq_teacher_';
-// V2：默认模型 gemini-2.5-flash-lite（2026-11-26 实测：老 Key 调 list-models 返回 200，
-// 列表里有它，又快又能用）。不要用 gemini-2.5-flash（已下线）和 gemini-4-hydrogen
-//（免费层 28-94 秒才回一句，太慢）。
-export const TEACHER_DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+// V2.3：默认模型改成 gemini-3.5-flash-lite。2026-11-27 实测：老 Key 调
+// gemini-2.5-flash-lite 直接 404（“no longer available to new users”，官方让改
+// 用 gemini-3.5-flash-lite），站里每次问老师都先白白撞一次 404 再回落，既慢又
+// 费一次请求；3.5-flash-lite 实测 1.1 秒出答案，flash-lite-latest 1.2 秒。
+// 不要用 gemini-2.5-flash（已下线）和 gemini-4-hydrogen（免费层 28-94 秒才回一句，太慢）。
+export const TEACHER_DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 // 默认模型 404 时的回落模型（同在实测的模型列表里）
 export const TEACHER_FALLBACK_MODEL = 'gemini-flash-lite-latest';
 export const TEACHER_KEY_URL = 'https://aistudio.google.com/apikey';
