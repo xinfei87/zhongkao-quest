@@ -2,6 +2,8 @@ import { esc, toast } from '../util.js';
 import { weekStats } from '../engine/scheduler.js';
 import { saveState } from '../store/local.js';
 import { loadSubject } from '../data.js';
+import { isSiteAuthed, SITE_AUTH_LS } from '../engine/siteauth.js';
+import { TEACHER_KEY_LS } from '../engine/teacher.js';
 
 export function renderMe(app, root) {
   const s = app.state;
@@ -47,6 +49,15 @@ export function renderMe(app, root) {
       </div>
     </div>
 
+    ${isSiteAuthed(localStorage) ? `
+    <h2 class="sec-title">账号</h2>
+    <div class="card" style="padding:6px 18px">
+      <div class="row" id="site-logout">
+        <div class="row-main"><div class="row-title">退出登录</div><div class="row-sub">退出后要重新输账号密码才能进；再进时带孩子最新进度</div></div>
+        <span class="hint">›</span>
+      </div>
+    </div>` : ''}
+
     <h2 class="sec-title">每日题量</h2>
     <div class="card">
       <div class="btn-row">
@@ -73,6 +84,18 @@ export function renderMe(app, root) {
   root.querySelector('#parent').onclick = () => app.go('parent');
   root.querySelector('#teacher').onclick = () => app.go('teacher');
   root.querySelector('#wrongbook').onclick = () => showWrongBook(app, root);
+  // V2.5：只有用账号密码登录过的设备（老师那台）才有“退出登录”；孩子 iPad 没走过口令门，不显示。
+  const logout = root.querySelector('#site-logout');
+  if (logout) {
+    logout.onclick = () => {
+      if (!confirm('退出后要重新输账号密码才能进。确定吗？')) return;
+      try {
+        localStorage.removeItem(SITE_AUTH_LS);
+        localStorage.removeItem(TEACHER_KEY_LS);
+      } catch { /* 清不掉就当没退，下次再点 */ }
+      location.reload();
+    };
+  }
   root.querySelectorAll('[data-size]').forEach((b) => {
     b.onclick = () => {
       s.profile.dailyQuestions = Number(b.dataset.size);

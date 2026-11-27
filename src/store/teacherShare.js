@@ -17,11 +17,24 @@ import { encodeState, decodeState } from './sync.js';
 export const TEACHER_SHARE_DAYS = 7;
 const PREFIX = 'T7-';
 
-export async function createTeacherShare(state) {
+/**
+ * 把孩子的学习存档脱敏成“可分享的快照”：
+ * - 家长 PIN 换成随机数（老师那台设备上的家长入口打不开，也不会拿到真的 PIN；
+ *   1234 这种默认 PIN 更不能留，否则老师随手一试就进了家长入口）。
+ * - Gemini Key 不在 state 里，这里再防一手。
+ * - 其余（做题记录、错题本、积分、掌握度）原样保留，老师登录后看到的和孩子这台设备上一样。
+ */
+export function stripStateForShare(state) {
   const stripped = JSON.parse(JSON.stringify(state || {}));
-  // 去掉家长 PIN；Key 不在 state 里，这里再防一手
-  if (stripped.profile) delete stripped.profile.pin;
+  if (stripped.profile) {
+    stripped.profile.pin = String(Math.floor(10000000 + Math.random() * 90000000));
+  }
   delete stripped.teacherKey;
+  return stripped;
+}
+
+export async function createTeacherShare(state) {
+  const stripped = stripStateForShare(state);
   const payload = {
     kind: 'teacher',
     version: 1,

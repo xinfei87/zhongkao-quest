@@ -291,7 +291,7 @@ test('V2 问老师：没填 Key、429 都抛错（调用方回落静态解析，
   );
 });
 
-test('V2 老师分享码：往返不丢数据，快照里没有 PIN；过期报错', async () => {
+test('V2 老师分享码：往返不丢数据，快照里没有真 PIN；过期报错', async () => {
   const state = {
     profile: { name: '小飞', pin: '1234', dailyQuestions: 4 },
     points: 10, sessions: [], today: null, topicStats: {}, wrongBook: [],
@@ -300,7 +300,9 @@ test('V2 老师分享码：往返不丢数据，快照里没有 PIN；过期报�
   assert.ok(code.startsWith('T7-'));
   const payload = await decodeTeacherShare(code);
   assert.equal(payload.state.profile.name, '小飞');
-  assert.equal(payload.state.profile.pin, undefined);
+  // 快照里的 PIN 被换成随机数：不是真的 1234，老师拿着它也进不了家长入口
+  assert.notEqual(payload.state.profile.pin, '1234');
+  assert.match(payload.state.profile.pin, /^\d{8}$/);
   assert.ok(payload.exp > Date.now());
   // 过期的码：手工拼一个过期 payload
   const expired = 'T7-' + (await encodeState({ kind: 'teacher', generatedAt: 0, exp: 1, state }));
@@ -620,25 +622,58 @@ test('V2.4 追问走接口：发出的 contents 交替、404 回落；空 thread
 
 /* ---------- V2.5 全站口令 + 共享 Key ---------- */
 import { SITE_ACCOUNT, isSiteAccount, isSiteAuthed, markSiteAuthed, encryptSharedKey, decryptSharedKey, loadSharedPack } from '../src/engine/siteauth.js';
+import { stripStateForShare } from '../src/store/teacherShare.js';
 
 const FAKE_KEY = 'AQ.test-teacher-key-1234567890abcdef';
+const FAKE_STATE = {
+  version: 1,
+  profile: { name: '孩子', pin: '1234', dailyQuestions: 12, dailyGoalMinutes: 30 },
+  points: 250,
+  wrongBook: [{ questionId: 'q1', topicId: 't1', subject: 'math', count: 2, status: 'open' }],
+  topicStats: { t1: { seen: 5, correct: 3 } },
+  sessions: [{ date: '2026-11-27', subject: 'math', minutes: 30, correct: 9, total: 12, points: 90 }],
+};
 
-test('V2.5 共享 Key：加密→解密 round-trip（对口令解出原 Key）', async () => {
-  const pack = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123');
+test('V2.5 共享 Key：加密→解密 round-trip（Key + 孩子进度快照）', async () => {
+  const pack = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123', FAKE_STATE);
   assert.equal(pack.v, 1);
   assert.ok(pack.salt && pack.iv && pack.data);
   // 包是纯 JSON，能直接存进 data/shared-key.json
   assert.equal(JSON.parse(JSON.stringify(pack)).data, pack.data);
   const back = await decryptSharedKey(pack, 'teacher-pw-123');
-  assert.equal(back, FAKE_KEY);
+  assert.equal(back.key, FAKE_KEY);
+  assert.equal(back.state.points, 250);
+  assert.equal(back.state.wrongBook.length, 1);
+  assert.equal(back.state.wrongBook[0].questionId, 'q1');
   // 两次加密 salt/iv 不同（随机），密文不一样但都能解
-  const pack2 = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123');
+  const pack2 = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123', FAKE_STATE);
   assert.notEqual(pack2.data, pack.data);
-  assert.equal(await decryptSharedKey(pack2, 'teacher-pw-123'), FAKE_KEY);
+  const back2 = await decryptSharedKey(pack2, 'teacher-pw-123');
+  assert.equal(back2.key, FAKE_KEY);
+  assert.equal(back2.state.points, 250);
+  // 不带快照的包：state 是 null
+  const noState = await decryptSharedKey(await encryptSharedKey(FAKE_KEY, 'teacher-pw-123'), 'teacher-pw-123');
+  assert.equal(noState.key, FAKE_KEY);
+  assert.equal(noState.state, null);
+  // 不压缩的包也能解（没 CompressionStream 的环境走这条路）
+  const plain = await decryptSharedKey(await encryptSharedKey(FAKE_KEY, 'teacher-pw-123', FAKE_STATE, { compress: false }), 'teacher-pw-123');
+  assert.equal(plain.key, FAKE_KEY);
+  assert.equal(plain.state.points, 250);
+});
+
+test('V2.5 快照脱敏：PIN 被换掉、Key 不进快照，错题本留着', () => {
+  const stripped = stripStateForShare({ ...FAKE_STATE, teacherKey: 'AQ.should-not-be-here-1234567890' });
+  assert.notEqual(stripped.profile.pin, '1234');
+  assert.match(stripped.profile.pin, /^\d{8}$/);
+  assert.equal(stripped.teacherKey, undefined);
+  assert.equal(stripped.wrongBook.length, 1);
+  assert.equal(stripped.points, 250);
+  // 两次脱敏 PIN 各不相同（随机）
+  assert.notEqual(stripStateForShare(FAKE_STATE).profile.pin, stripped.profile.pin);
 });
 
 test('V2.5 共享 Key：错口令解密失败；篡改密文解密失败', async () => {
-  const pack = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123');
+  const pack = await encryptSharedKey(FAKE_KEY, 'teacher-pw-123', FAKE_STATE);
   await assert.rejects(decryptSharedKey(pack, 'wrong-password'), /口令不对或包已损坏/);
   const tampered = { ...pack, data: pack.data.slice(0, -4) + 'AAAA' };
   await assert.rejects(decryptSharedKey(tampered, 'teacher-pw-123'), /口令不对或包已损坏/);
@@ -662,10 +697,10 @@ test('V2.5 共享 Key：包格式不对报“包还没生成/包已损坏”，�
   assert.equal(pack.v, 1);
 });
 
-test('V2.5 全站口令：账号必须是 ceshi；登录标记读写', () => {
-  assert.equal(SITE_ACCOUNT, 'ceshi');
-  assert.equal(isSiteAccount('ceshi'), true);
-  assert.equal(isSiteAccount(' ceshi '), true);
+test('V2.5 全站口令：账号必须是 test；登录标记读写', () => {
+  assert.equal(SITE_ACCOUNT, 'test');
+  assert.equal(isSiteAccount('test'), true);
+  assert.equal(isSiteAccount(' test '), true);
   assert.equal(isSiteAccount('teacher'), false);
   assert.equal(isSiteAccount(''), false);
   assert.equal(isSiteAccount(null), false);

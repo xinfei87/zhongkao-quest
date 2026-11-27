@@ -2,7 +2,7 @@ import { esc, toast, dayKey, uid } from '../util.js';
 import { weekStats } from '../engine/scheduler.js';
 import { saveState, resetProgress, exportState, replaceState } from '../store/local.js';
 import { encodeState, decodeState } from '../store/sync.js';
-import { createTeacherShare, TEACHER_SHARE_DAYS } from '../store/teacherShare.js';
+import { createTeacherShare, stripStateForShare, TEACHER_SHARE_DAYS } from '../store/teacherShare.js';
 import { hasTeacherKey, getTeacherKeySuffix, saveTeacherKey, saveTeacherModel, getTeacherModel, TEACHER_DEFAULT_MODEL, TEACHER_KEY_LS } from '../engine/teacher.js';
 import { encryptSharedKey } from '../engine/siteauth.js';
 import { loadSubject } from '../data.js';
@@ -135,12 +135,12 @@ export function renderParent(app, root) {
     <h2 class="sec-title">共享 Key</h2>
     ${hasTeacherKey(localStorage) ? `
     <div class="card">
-      <p class="hint">给老师开问老师用的：设一个网站密码，站会把本机的 Key 加密成一串密文。知道密码的人打开网站、输账号 ceshi 和密码就能用问老师；不知道密码的人拿到密文也没用。换密码要重新生成一次包。</p>
+      <p class="hint">给老师开一个账号：设一个网站密码，站会把本机的 Key 和孩子现在的进度（做题记录、错题本、积分）一起加密成一串密文。老师打开网站、输账号 test 和这个密码就能进，看到的和孩子这台设备上的一模一样；不知道密码的人拿到密文也没用。换密码、或想让老师看到孩子最新的进度，重新生成一次包发给管理员就行。</p>
       <div class="btn-row" style="margin-top:10px">
         <input class="answer-input" id="share-pw1" type="password" placeholder="网站密码（至少 6 位）" style="flex:1" autocomplete="new-password" />
         <input class="answer-input" id="share-pw2" type="password" placeholder="再输一次" style="flex:1" autocomplete="new-password" />
       </div>
-      <button class="btn btn-sm btn-primary" id="share-gen" style="margin-top:10px">生成共享包</button>
+      <button class="btn btn-sm btn-primary" id="share-pack-gen" style="margin-top:10px">生成共享包</button>
       <textarea class="answer-input" id="share-pack" rows="4" style="margin-top:10px;font-family:monospace;font-size:13px" readonly placeholder="生成的密文会出现在这里"></textarea>
       <div class="btn-row" style="margin-top:10px">
         <button class="btn btn-sm" id="share-copy">复制密文</button>
@@ -299,8 +299,9 @@ export function renderParent(app, root) {
     toast('Key 已清除');
   };
 
-  // V2.5：共享 Key——把本机 Key 加密成包。密码只存在这次操作的内存里，生成完清空两个密码框，不写 localStorage。
-  const shareGen = root.querySelector('#share-gen');
+  // V2.5：共享 Key——把本机 Key + 孩子进度快照加密成包。密码只存在这次操作的内存里，生成完清空两个密码框，不写 localStorage。
+  // 注意：下面“分享给老师”区也有一个 id="share-gen" 的按钮（V2 原有的），两个按钮 id 不能重名，这里用 share-pack-gen。
+  const shareGen = root.querySelector('#share-pack-gen');
   if (shareGen) {
     shareGen.onclick = async () => {
       const pw1 = root.querySelector('#share-pw1').value;
@@ -310,11 +311,11 @@ export function renderParent(app, root) {
       const key = localStorage.getItem(TEACHER_KEY_LS)?.trim();
       if (!key) return toast('本机还没填 Key');
       try {
-        const pack = await encryptSharedKey(key, pw1);
+        const pack = await encryptSharedKey(key, pw1, stripStateForShare(s));
         root.querySelector('#share-pack').value = JSON.stringify(pack);
         root.querySelector('#share-pw1').value = '';
         root.querySelector('#share-pw2').value = '';
-        root.querySelector('#share-status').textContent = '共享包已生成。复制下面这串密文发给管理员，他放进仓库 data/shared-key.json 后老师就能登录用了。换密码要重新生成一次包。';
+        root.querySelector('#share-status').textContent = '共享包已生成，里面带了孩子现在的进度快照。复制下面这串密文发给管理员，他放进仓库 data/shared-key.json 后老师就能登录用了，登录后看到的和孩子这台设备上的一样。换密码、或孩子进度变多了，重新生成一次包。';
         toast('共享包已生成');
       } catch (e) {
         toast(e.message || '生成失败');
