@@ -3,7 +3,7 @@ import { judge, inputCount } from '../engine/judge.js';
 import { groupByTopic, recordAnswer, recordFlashcard, markShaky, completeSession, markAnsweredOnce, addDailyMinutes } from '../engine/scheduler.js';
 import { pickConfirmQuestion, pickVariantQuestion, diagnose } from '../engine/backtrack.js';
 import { buildHintLevels, HINT_LEVELS } from '../engine/hints.js';
-import { askTeacher, hasTeacherKey, readTeacherCache, TEACHER_KEY_URL } from '../engine/teacher.js';
+import { askTeacher, askTeacherFollowUp, hasTeacherKey, readTeacherCache, readTeacherThread, writeTeacherThread, clearTeacherThread, clearTeacherCache, TEACHER_KEY_URL } from '../engine/teacher.js';
 import { labForTopic } from '../labs.js';
 import { saveState } from '../store/local.js';
 
@@ -384,15 +384,93 @@ export function renderQuiz(app, root) {
     return Math.max(0, 2 - (w.streak || 0));
   }
 
-  /** ---------- V2 问老师 ---------- */
+  /** ---------- V2 问老师（V2.4：多轮讨论） ----------
+   * 老师讲完会反问一句，学生要在下面回话，老师再接着讲。讨论记录按题存在
+   * localStorage（zkq_teacher_thread_<questionId>），切题回来还在。
+   * V2.4 顺手修了截图里的真 bug：原来成功分支从来没恢复按钮，问完一次按钮
+   * 会一直卡在“老师正在想…”且点不了。 */
   function wireTeacher(btn, box, q, topic, myAnswer) {
     if (!btn || !box) return;
-    btn.onclick = async () => {
+    // 这道题已有的讨论记录（没有就是 []）；首问成功后第一轮老师讲解就是 thread[0]
+    let thread = readTeacherThread(localStorage, q.id);
+    let sending = false;
+
+    const noKeyHtml = `<p><b>问老师要先请家长设置一下：</b>家长在“我的 → 家长入口 → AI 老师设置”里粘贴 Gemini Key（只存在这台设备上，不会上传）。没有 Key 也能先看上面的静态解析。</p><p style="margin-top:6px">取 Key 的官方页面：<a href="${TEACHER_KEY_URL}" target="_blank" rel="noopener noreferrer">${TEACHER_KEY_URL}</a></p>`;
+
+    // V2：记一笔“问老师”使用次数，供家长看板统计（只记日期，不记内容；首问和追问都记）
+    const countTeacherAsk = () => {
+      state.teacherAsks = [...(state.teacherAsks || []), dayKey()].slice(-200);
+      saveState(state);
+    };
+
+    const bubbleHtml = (m) => (m.role === 'teacher'
+      ? `<div class="msg-teacher"><p><b>老师讲：</b></p><p style="white-space:pre-wrap">${esc(m.text)}</p></div>`
+      : `<div class="msg-student"><p><b>你说：</b></p><p style="white-space:pre-wrap">${esc(m.text)}</p></div>`);
+
+    // 画出讨论区：一来一回的消息 + 输入框 + “告诉老师”发送键
+    const showDiscussion = (cachedNote = '') => {
+      box.style.display = 'block';
+      box.innerHTML = `
+        <div class="teacher-thread" id="teacher-thread">${thread.map(bubbleHtml).join('')}</div>
+        ${cachedNote ? `<p class="hint" style="margin-top:6px">${cachedNote}</p>` : ''}
+        <div class="btn-row" style="margin-top:10px">
+          <input class="answer-input" id="teacher-input" placeholder="想一想，告诉老师…" style="flex:2" />
+          <button class="btn btn-sm btn-primary" id="teacher-send">告诉老师</button>
+        </div>`;
+      wireSend();
+    };
+
+    // 讨论区里的发送逻辑（只在讨论区画出来之后接线）
+    const wireSend = () => {
+      const input = box.querySelector('#teacher-input');
+      const sendBtn = box.querySelector('#teacher-send');
+      const threadEl = box.querySelector('#teacher-thread');
+      if (!input || !sendBtn || !threadEl) return;
+      const send = async () => {
+        const text = input.value.trim();
+        if (!text || sending) return;
+        sending = true;
+        input.disabled = true;
+        sendBtn.disabled = true;
+        const thinking = document.createElement('p');
+        thinking.className = 'hint';
+        thinking.textContent = '老师正在想…（最多等 20 秒）';
+        threadEl.appendChild(thinking);
+        const nextThread = [...thread, { role: 'user', text }];
+        try {
+          const { text: reply } = await askTeacherFollowUp({
+            question: q, topicName: topic.name, myAnswer,
+            hintsShown: hintShown.get(q.id) || 0,
+            thread: nextThread, storage: localStorage,
+          });
+          countTeacherAsk();
+          thread = [...nextThread, { role: 'teacher', text: reply }];
+          writeTeacherThread(localStorage, q.id, thread);
+          thinking.remove();
+          threadEl.insertAdjacentHTML('beforeend', bubbleHtml({ role: 'user', text }) + bubbleHtml({ role: 'teacher', text: reply }));
+          input.value = '';
+        } catch (e) {
+          thinking.remove();
+          threadEl.insertAdjacentHTML('beforeend', `<p class="hint">老师现在没空（${e?.message === 'RATE_LIMIT' ? '调用太频繁，等一会儿再试' : '网络或额度问题'}），这句话没发出去，改改再点一次“告诉老师”。</p>`);
+          // 失败不存 thread，输入框留着原话，学生改改再发
+        } finally {
+          sending = false;
+          input.disabled = false;
+          sendBtn.disabled = false;
+          input.focus();
+        }
+      };
+      sendBtn.onclick = send;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    };
+
+    // 首问：没问过就调 askTeacher（有缓存直接读缓存，不花钱）
+    const askFirst = async () => {
       const shown = hintShown.get(q.id) || 0;
       const cached = readTeacherCache(localStorage, q.id);
       if (!hasTeacherKey(localStorage) && !cached) {
         box.style.display = 'block';
-        box.innerHTML = `<p><b>问老师要先请家长设置一下：</b>家长在“我的 → 家长入口 → AI 老师设置”里粘贴 Gemini Key（只存在这台设备上，不会上传）。没有 Key 也能先看上面的静态解析。</p><p style="margin-top:6px">取 Key 的官方页面：<a href="${TEACHER_KEY_URL}" target="_blank" rel="noopener noreferrer">${TEACHER_KEY_URL}</a></p>`;
+        box.innerHTML = noKeyHtml;
         return;
       }
       btn.disabled = true;
@@ -403,15 +481,42 @@ export function renderQuiz(app, root) {
         const { text, cached: wasCached } = await askTeacher({
           question: q, topicName: topic.name, myAnswer, hintsShown: shown, storage: localStorage,
         });
-        // V2：记一笔“问老师”使用次数，供家长看板统计（只记日期，不记内容）
-        state.teacherAsks = [...(state.teacherAsks || []), dayKey()].slice(-200);
-        saveState(state);
-        box.innerHTML = `<p><b>老师讲：</b></p><p style="white-space:pre-wrap">${esc(text)}</p>${wasCached ? '<p class="hint" style="margin-top:6px">这段讲解是上次问过的缓存，没再花钱。</p>' : ''}`;
+        countTeacherAsk();
+        thread = [{ role: 'teacher', text }];
+        writeTeacherThread(localStorage, q.id, thread);
+        showDiscussion(wasCached ? '这段讲解是上次问过的缓存，没再花钱。' : '');
+        // V2.4：成功后按钮必须恢复——之前成功分支漏了恢复，按钮会一直卡在“老师正在想…”
+        btn.disabled = false;
+        btn.textContent = '换个问法再问一次';
       } catch (e) {
         box.innerHTML = `<p>老师现在没空（${e?.message === 'RATE_LIMIT' ? '调用太频繁，等一会儿再试' : '网络或额度问题'}），先看上面的静态解析，晚点再点一次。</p>`;
         btn.disabled = false;
         btn.textContent = '问老师，还是不懂';
       }
+    };
+
+    // 已有讨论记录：切题回来直接恢复，按钮变成“换个问法再问一次”
+    if (thread.length > 0) {
+      showDiscussion();
+      btn.disabled = false;
+      btn.textContent = '换个问法再问一次';
+    }
+
+    btn.onclick = async () => {
+      // 已有讨论：点“换个问法再问一次”——先 confirm 再清记录、清缓存，重新问一遍
+      if (thread.length > 0) {
+        // 先守门：没 Key 又没缓存时不清空讨论记录，直接提示去设置
+        if (!hasTeacherKey(localStorage) && !readTeacherCache(localStorage, q.id)) {
+          box.style.display = 'block';
+          box.innerHTML = noKeyHtml;
+          return;
+        }
+        if (!confirm('换个问法会清空这次的讨论记录，重新问老师一遍。确定吗？')) return;
+        clearTeacherThread(localStorage, q.id);
+        clearTeacherCache(localStorage, q.id);
+        thread = [];
+      }
+      await askFirst();
     };
   }
 

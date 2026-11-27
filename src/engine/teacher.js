@@ -96,6 +96,11 @@ function cacheKey(questionId) {
   return `${TEACHER_CACHE_PREFIX}${questionId}`;
 }
 
+/** V2.4：清掉一道题的首问缓存（“换个问法再问一次”时用，逼它重新问） */
+export function clearTeacherCache(storage, questionId) {
+  try { storage?.removeItem?.(cacheKey(questionId)); } catch { /* 不报错 */ }
+}
+
 export function readTeacherCache(storage, questionId) {
   try {
     const raw = storage?.getItem?.(cacheKey(questionId));
@@ -118,37 +123,57 @@ function writeTeacherCache(storage, questionId, text) {
  * @param {object} p.question 题目；p.topicName 考点名；p.myAnswer 学生答案
  * @param {number} p.hintsShown 已看提示级数；p.storage localStorage；p.fetchImpl fetch（测试可注入）
  * @param {number} [p.timeoutMs=20000] 超时 20 秒即放弃
+ * @param {boolean} [p.force=false] 为 true 时跳过缓存直接重新问（“换个问法再问一次”）
  */
 export async function askTeacher({
   question, topicName, myAnswer, hintsShown = 0,
-  storage, fetchImpl = fetch, timeoutMs = 20000,
+  storage, fetchImpl = fetch, timeoutMs = 20000, force = false,
 } = {}) {
   if (!question?.id) throw new Error('题目不完整，问不了老师');
-  const cached = readTeacherCache(storage, question.id);
-  if (cached) return { text: cached, cached: true };
+  if (!force) {
+    const cached = readTeacherCache(storage, question.id);
+    if (cached) return { text: cached, cached: true };
+  }
 
+  const text = await callTeacherApi({
+    key: requireTeacherKey(storage),
+    model: getTeacherModel(storage),
+    systemText: TEACHER_SYSTEM_PROMPT,
+    contents: [{ role: 'user', parts: [{ text: buildTeacherUserText({ question, topicName, myAnswer, hintsShown }) }] }],
+    fetchImpl, timeoutMs,
+  });
+  writeTeacherCache(storage, question.id, text);
+  return { text, cached: false };
+}
+
+/** 取 Key，没有就抛 NO_KEY（调用方据此提示去家长入口设置） */
+function requireTeacherKey(storage) {
   const key = storage?.getItem?.(TEACHER_KEY_LS)?.trim();
   if (!key) throw new Error('NO_KEY');
-  const model = getTeacherModel(storage);
+  return key;
+}
+
+/**
+ * 调一次 Gemini generateContent（首问和追问共用）。
+ * 先调指定模型；404（模型下线/改名）时改调回落模型再试一次，其他错误不重试。
+ * 超时、429、空回复都抛错，调用方 catch 后回落到静态解析，页面绝不卡死。
+ */
+async function callTeacherApi({ key, model, systemText, contents, fetchImpl = fetch, timeoutMs = 20000 }) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  // V2：先调默认模型；404（模型下线/改名）时改调回落模型再试一次，其他错误不重试
-  const callOnce = async (m) => {
-    const res = await fetchImpl(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(key)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: TEACHER_SYSTEM_PROMPT }] },
-          contents: [{ parts: [{ text: buildTeacherUserText({ question, topicName, myAnswer, hintsShown }) }] }],
-          generationConfig: { maxOutputTokens: 800, temperature: 0.3 },
-        }),
-        signal: ctrl.signal,
-      },
-    );
-    return res;
-  };
+  const callOnce = async (m) => fetchImpl(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemText }] },
+        contents,
+        generationConfig: { maxOutputTokens: 800, temperature: 0.3 },
+      }),
+      signal: ctrl.signal,
+    },
+  );
   try {
     let res = await callOnce(model);
     if (res.status === 404 && model !== TEACHER_FALLBACK_MODEL) {
@@ -161,9 +186,125 @@ export async function askTeacher({
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('').trim();
     if (!text) throw new Error('EMPTY');
-    writeTeacherCache(storage, question.id, text);
-    return { text, cached: false };
+    return text;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* ================= V2.4 多轮讨论 =================
+ * 每道题一个 thread，存在 localStorage（键名 zkq_teacher_thread_<questionId>），
+ * 形状 [{ role: 'user' | 'teacher', text }]。第一轮就是首问的老师讲解（已进 thread，
+ * 不用重新问）；切到别的题回来，这道题的讨论记录还在。家长看板只统计次数，不看内容。
+ */
+export const TEACHER_THREAD_PREFIX = 'zkq_teacher_thread_';
+/** 学生连续回这么多次还没过关键步骤，老师直接给完整做法并收尾，不再反问 */
+export const TEACHER_MAX_STUDENT_TURNS = 6;
+
+function threadKey(questionId) {
+  return `${TEACHER_THREAD_PREFIX}${questionId}`;
+}
+
+/** thread → JSON 字符串（纯函数，便于测试；脏条目直接丢掉） */
+export function serializeTeacherThread(thread) {
+  try {
+    const clean = (Array.isArray(thread) ? thread : []).filter(
+      (m) => m && typeof m.text === 'string' && (m.role === 'user' || m.role === 'teacher'),
+    ).map((m) => ({ role: m.role, text: m.text }));
+    return JSON.stringify(clean);
+  } catch {
+    return '[]';
+  }
+}
+
+/** JSON 字符串 → thread（纯函数；解析失败或格式不对都回 []，不抛错） */
+export function parseTeacherThread(raw) {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (m) => m && typeof m.text === 'string' && (m.role === 'user' || m.role === 'teacher'),
+    ).map((m) => ({ role: m.role, text: m.text }));
+  } catch {
+    return [];
+  }
+}
+
+export function readTeacherThread(storage, questionId) {
+  try {
+    return parseTeacherThread(storage?.getItem?.(threadKey(questionId)));
+  } catch {
+    return [];
+  }
+}
+
+export function writeTeacherThread(storage, questionId, thread) {
+  try {
+    storage?.setItem?.(threadKey(questionId), serializeTeacherThread(thread));
+  } catch { /* 写不进也不影响做题 */ }
+}
+
+export function clearTeacherThread(storage, questionId) {
+  try {
+    storage?.removeItem?.(threadKey(questionId));
+  } catch { /* 不报错 */ }
+}
+
+/**
+ * 拼追问的 contents（纯函数，便于测试）。
+ * 第 0 条永远是原题上下文（user）；之后是 thread：一轮 teacher 首答 → model，
+ * 再 user/teacher 交替。Gemini 多轮要求 user/model 严格交替，同 role 连续出现时
+ * 合并进上一条，绝不发两条同 role 相邻的消息。
+ */
+export function buildTeacherFollowUpContents({ question, topicName, myAnswer, hintsShown = 0, thread = [] }) {
+  const contents = [{ role: 'user', parts: [{ text: buildTeacherUserText({ question, topicName, myAnswer, hintsShown }) }] }];
+  for (const m of Array.isArray(thread) ? thread : []) {
+    if (!m || typeof m.text !== 'string') continue;
+    const role = m.role === 'teacher' ? 'model' : 'user';
+    const last = contents[contents.length - 1];
+    if (last.role === role) last.parts[0].text += `\n${m.text}`;
+    else contents.push({ role, parts: [{ text: m.text }] });
+  }
+  return contents;
+}
+
+/**
+ * 追问用的 system prompt：原老师人设不变，再加追问规则——
+ * 答对了夸一句推进下一步，答错了温和指出、给更小的提示，一次只讲一步；
+ * 学生回够 TEACHER_MAX_STUDENT_TURNS 次还没过关键步骤，直接给完整做法收尾。
+ */
+export function buildTeacherFollowUpSystemPrompt(userTurns = 0) {
+  const extra = [
+    '现在是同一道题的继续讨论：学生已经听过你的第一段讲解，正在回你的反问。',
+    '根据他这次回的话接着讲：答对了先夸一句，再推进下一步；答错了温和指出错在哪，再给一个比刚才更小的提示；一次只讲一步，每段不超过 150 字；不要直接把完整答案甩出来。',
+  ];
+  if (userTurns >= TEACHER_MAX_STUDENT_TURNS) {
+    extra.push(`学生已经连续回了 ${userTurns} 次还没过关键步骤，这次直接给完整做法，分步写清楚，然后收尾鼓励他去做下一题，不要再反问。`);
+  }
+  return `${TEACHER_SYSTEM_PROMPT}\n${extra.join('\n')}`;
+}
+
+/**
+ * 追问一次（学生回了一句话之后）。返回 { text, cached: false }；失败时抛错。
+ * thread 必须以一条 user 消息结尾（就是学生刚回的那句）；追问不写首问缓存。
+ * @param {Array} p.thread [{role:'user'|'teacher', text}]，含学生刚回的最后一句
+ */
+export async function askTeacherFollowUp({
+  question, topicName, myAnswer, hintsShown = 0, thread = [],
+  storage, fetchImpl = fetch, timeoutMs = 20000,
+} = {}) {
+  if (!question?.id) throw new Error('题目不完整，问不了老师');
+  const msgs = Array.isArray(thread) ? thread : [];
+  if (!msgs.length || msgs[msgs.length - 1].role !== 'user') {
+    throw new Error('讨论记录不完整，先让学生回一句话');
+  }
+  const userTurns = msgs.filter((m) => m.role === 'user').length;
+  const text = await callTeacherApi({
+    key: requireTeacherKey(storage),
+    model: getTeacherModel(storage),
+    systemText: buildTeacherFollowUpSystemPrompt(userTurns),
+    contents: buildTeacherFollowUpContents({ question, topicName, myAnswer, hintsShown, thread: msgs }),
+    fetchImpl, timeoutMs,
+  });
+  return { text, cached: false };
 }
