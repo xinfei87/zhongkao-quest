@@ -5,6 +5,7 @@ import { diagnose, buildHardIndex, pickConfirmQuestion } from '../src/engine/bac
 import { recordAnswer, buildSession, pickFocusTopic, groupByTopic, completeSession, markAnsweredOnce, weekStats, addDailyMinutes } from '../src/engine/scheduler.js';
 import { dayKey, addDays } from '../src/util.js';
 import { buildSpeakPlan, detectLang, splitUtterances } from '../src/engine/readaloud.js';
+import { defaultState, migrateProfile } from '../src/store/local.js';
 
 test('朗读按中文和英文切换语言', () => {
   assert.equal(detectLang('选出正确答案'), 'zh-CN');
@@ -802,4 +803,17 @@ test('V2.7 登录页重新贴 Key：只有 AQ. 开头、够长的串才算 Key',
   assert.equal(isValidTeacherKey('AQ.太短'), false);
   assert.equal(isValidTeacherKey(''), false);
   assert.equal(isValidTeacherKey(null), false);
+});
+
+test('每日题量改成 21 道：新档案默认 21 题/50 分钟', () => {
+  const p = defaultState().profile;
+  assert.equal(p.dailyQuestions, 21);
+  assert.equal(p.dailyGoalMinutes, 50);
+});
+
+test('旧 12 题档自动升到 21 题，配套 30 分钟升到 50 分钟，其他自选值不动', () => {
+  assert.deepEqual(migrateProfile({ dailyQuestions: 12, dailyGoalMinutes: 30 }), { dailyQuestions: 21, dailyGoalMinutes: 50 });
+  assert.deepEqual(migrateProfile({ dailyQuestions: 12, dailyGoalMinutes: 45 }), { dailyQuestions: 21, dailyGoalMinutes: 45 });
+  assert.deepEqual(migrateProfile({ dailyQuestions: 5, dailyGoalMinutes: 30 }), { dailyQuestions: 5, dailyGoalMinutes: 30 });
+  assert.deepEqual(migrateProfile({ dailyQuestions: 21, dailyGoalMinutes: 50 }), { dailyQuestions: 21, dailyGoalMinutes: 50 });
 });

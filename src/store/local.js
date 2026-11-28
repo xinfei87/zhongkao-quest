@@ -10,7 +10,7 @@ export function defaultState() {
   return {
     version: 1,
     createdAt: dayKey(),
-    profile: { name: '', pin: '1234', dailyQuestions: 4, dailyGoalMinutes: 30, onboarded: false },
+    profile: { name: '', pin: '1234', dailyQuestions: 21, dailyGoalMinutes: 50, onboarded: false },
     streak: { days: 0, lastDate: '', best: 0 },
     points: 0,
     sessions: [],           // {date, subject, minutes, correct, total, points}
@@ -35,9 +35,23 @@ export function defaultState() {
   };
 }
 
+/**
+ * 2026-11-29：每日题量档从 12 题/30 分钟改成 21 题/约 50 分钟
+ * （2026-11-29 到 2027-06-20 还有 203 天，4144 道题每天最少 21 道才刷得完）。
+ * 旧设备上存的 12 自动升到 21；当时配套选的 30 分钟也一起升到 50，其他自选值不动。
+ */
+export function migrateProfile(profile) {
+  const out = { ...profile };
+  if (out.dailyQuestions === 12) {
+    out.dailyQuestions = 21;
+    if (out.dailyGoalMinutes === 30) out.dailyGoalMinutes = 50;
+  }
+  return out;
+}
+
 function merge(base, saved) {
   const out = { ...base, ...saved };
-  out.profile = { ...base.profile, ...(saved.profile || {}) };
+  out.profile = migrateProfile({ ...base.profile, ...(saved.profile || {}) });
   out.streak = { ...base.streak, ...(saved.streak || {}) };
   out.settings = { ...base.settings, ...(saved.settings || {}) };
   if (!Array.isArray(out.wrongBook)) out.wrongBook = [];

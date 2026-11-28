@@ -196,11 +196,11 @@ export function renderParent(app, root) {
       <p class="hint" style="margin-top:8px">PIN 只存本机，绝不写进仓库。改掉默认 1234 后，记得告诉家里人新 PIN。</p>
       <h3 style="font-size:15px;margin:16px 0 8px">每天目标</h3>
       <div class="btn-row">
-        ${[15, 30, 45].map((m) => `<button class="btn btn-sm ${(s.profile.dailyGoalMinutes || 30) === m ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
+        ${[15, 30, 45, 50].map((m) => `<button class="btn btn-sm ${(s.profile.dailyGoalMinutes || 30) === m ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
       </div>
       <h3 style="font-size:15px;margin:16px 0 8px">每日题量</h3>
       <div class="btn-row">
-        ${[3, 4, 5, 12].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n === 12 ? '12 题 · 约 30 分钟' : `${n} 题`}</button>`).join('')}
+        ${[3, 4, 5, 21].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n === 21 ? '21 题 · 约 50 分钟' : `${n} 题`}</button>`).join('')}
       </div>
       <div class="btn-row" style="margin-top:16px">
         <button class="btn btn-sm btn-warm" id="reset">清空全部进度</button>
