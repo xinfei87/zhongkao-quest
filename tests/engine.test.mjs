@@ -342,8 +342,8 @@ test('V2 看板：今日/趋势/问老师统计都从 state 里算，不编数',
 
 test('V2 数据完整性：全部 7 科 id 不重复、topicId 存在、答案在选项里', () => {
   const index = loadJSON('index.json');
-  assert.equal(index.totalTopics, 958);
-  assert.equal(index.totalQuestions, 4039);
+  assert.equal(index.totalTopics, 979);
+  assert.equal(index.totalQuestions, 4144);
   assert.equal(index.subjects.length, 7);
   for (const sub of index.subjects) {
     const topics = loadJSON(`topics/${sub.id}.json`);
