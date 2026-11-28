@@ -61,15 +61,15 @@ export function renderMe(app, root) {
     <h2 class="sec-title">每日题量</h2>
     <div class="card">
       <div class="btn-row">
-        ${[3, 4, 5, 12].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n === 12 ? '12 题 · 约 30 分钟' : `${n} 题`}</button>`).join('')}
+        ${[3, 4, 5, 21].map((n) => `<button class="btn btn-sm ${s.profile.dailyQuestions === n ? 'btn-primary' : ''}" data-size="${n}">${n === 21 ? '21 题 · 约 50 分钟' : `${n} 题`}</button>`).join('')}
       </div>
-      <p class="hint" style="margin-top:10px">题量越大，一关时间越长。12 题约 30 分钟，到点会提示收尾。</p>
+      <p class="hint" style="margin-top:10px">题量越大，一关时间越长。21 题约 50 分钟，到点会提示收尾。</p>
     </div>
 
     <h2 class="sec-title">每天目标</h2>
     <div class="card">
       <div class="btn-row">
-        ${[15, 30, 45].map((m) => `<button class="btn btn-sm ${(s.profile.dailyGoalMinutes || 30) === m ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
+        ${[15, 30, 45, 50].map((m) => `<button class="btn btn-sm ${(s.profile.dailyGoalMinutes || 30) === m ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
       </div>
       <p class="hint" style="margin-top:10px">做到目标分钟会提示“可以收尾了”，做完当前题就能结束。</p>
     </div>

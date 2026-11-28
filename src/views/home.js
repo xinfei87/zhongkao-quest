@@ -13,6 +13,9 @@ export function renderHome(app, root) {
   const done = s.today?.date === today && s.today.done;
   const wrongCount = (s.wrongBook || []).filter((w) => w.status !== 'cleared').length;
   const week = weekStats(s, 7);
+  // 每日一关的题量和时间跟着档案走（2026-11-29 起默认 21 题/约 50 分钟）。
+  const dailyQ = s.profile.dailyQuestions || 21;
+  const dailyMin = s.profile.dailyGoalMinutes || 50;
   // V2：首页显示当前主攻年级（调度已改成先补七年级地基）
   const focusText = s.focus?.grade
     ? `${s.focus.grade}年级${s.focus.topic ? ` · ${s.focus.topic}` : ''}`
@@ -22,9 +25,9 @@ export function renderHome(app, root) {
     <section class="card hero">
       <span class="hero-subject">${esc(subject.name)} · ${done ? '今天已完成' : '基础巩固'}</span>
       <h1>${done ? '今天已经打过卡了' : '开始今日一关'}</h1>
-      <p class="meta">${done ? '想再练一轮也完全可以' : '约 10 分钟 · 4 道题 · 第 1 题一定做得出来'}</p>
+      <p class="meta">${done ? '想再练一轮也完全可以' : `约 ${dailyMin} 分钟 · ${dailyQ} 道题 · 第 1 题一定做得出来`}</p>
       <p class="hint" style="margin-top:8px">主攻：${esc(focusText)}</p>
-      <button class="btn btn-primary" id="start">${done ? '再来一关' : '开始今日一关（约 10 分钟）'}</button>
+      <button class="btn btn-primary" id="start">${done ? '再来一关' : `开始今日一关（约 ${dailyMin} 分钟）`}</button>
     </section>
 
     ${!s.profile.onboarded ? `
@@ -34,7 +37,7 @@ export function renderHome(app, root) {
       <input class="answer-input" id="ob-name" placeholder="你的名字（比如：小飞）" style="width:100%" />
       <div class="btn-row" style="margin-top:10px">
         <span class="hint" style="align-self:center">每天目标</span>
-        ${[15, 30, 45].map((m) => `<button class="btn btn-sm ${m === 30 ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
+        ${[15, 30, 45, 50].map((m) => `<button class="btn btn-sm ${m === 50 ? 'btn-primary' : ''}" data-goal="${m}">${m} 分钟</button>`).join('')}
       </div>
       <div class="btn-row" style="margin-top:12px">
         <button class="btn btn-primary" id="ob-done">开始练</button>
@@ -89,7 +92,7 @@ export function renderHome(app, root) {
   // V2：孩子档案引导（首次打开填一次）。没有密码，每天打开就是自己的进度。
   const obDone = root.querySelector('#ob-done');
   if (obDone) {
-    let goal = 30;
+    let goal = 50;
     root.querySelectorAll('[data-goal]').forEach((b) => {
       b.onclick = () => {
         goal = Number(b.dataset.goal);

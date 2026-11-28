@@ -2,7 +2,7 @@
 /* V2.7.1：后台刷新改走 cache:'reload'——GitHub Pages 的文件带 10 分钟 HTTP 缓存，
  * 不加 reload 时后台取回来的还是 HTTP 缓存里的旧版，越刷越旧（2026-11-27 晚 iPad
  * 上刷了很多次都还是旧登录页，就是这么卡住的）。 */
-const CACHE_VERSION = 'zkq-v3';
+const CACHE_VERSION = 'zkq-v4';
 const SHELL = [
   './',
   './index.html',
