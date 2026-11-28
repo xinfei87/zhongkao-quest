@@ -3,11 +3,24 @@ import { judge, inputCount } from '../engine/judge.js';
 import { groupByTopic, recordAnswer, recordFlashcard, markShaky, completeSession, markAnsweredOnce, addDailyMinutes } from '../engine/scheduler.js';
 import { pickConfirmQuestion, pickVariantQuestion, diagnose } from '../engine/backtrack.js';
 import { buildHintLevels, HINT_LEVELS } from '../engine/hints.js';
+import { buildSpeakPlan } from '../engine/readaloud.js';
 import { askTeacher, askTeacherFollowUp, hasTeacherKey, readTeacherCache, readTeacherThread, writeTeacherThread, clearTeacherThread, clearTeacherCache, TEACHER_KEY_URL } from '../engine/teacher.js';
 import { labForTopic } from '../labs.js';
 import { saveState } from '../store/local.js';
 
 const PRAISE = ['稳，这一分拿到了', '对了，继续保持', '漂亮，基础分抓住了', '这题你拿下了'];
+const READ_PROMPT = '🔊 读题目';
+const READ_EXPLANATION = '🔊 读讲解';
+const speech = typeof window !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function'
+  ? window.speechSynthesis : null;
+let localVoices = [];
+if (speech) {
+  const refreshVoices = () => {
+    localVoices = speech.getVoices().filter((voice) => voice.localService);
+  };
+  speech.addEventListener('voiceschanged', refreshVoices);
+  refreshVoices();
+}
 
 export function renderQuiz(app, root) {
   const session = app.session;
@@ -40,8 +53,70 @@ export function renderQuiz(app, root) {
   let timerId = null;
   let timeUpNotified = false;
   const goalMinutes = state.profile.dailyGoalMinutes || 30;
+  let reading = null;
+
+  function readButton(id, label) {
+    return speech ? `<button type="button" class="btn btn-sm btn-ghost" id="${id}" style="margin:8px 0">${label}</button>` : '';
+  }
+
+  function clearReading() {
+    if (!reading) return;
+    reading.button.textContent = reading.label;
+    reading = null;
+    window.removeEventListener('hashchange', stopReading);
+    window.removeEventListener('pagehide', stopReading);
+  }
+
+  function stopReading() {
+    if (!reading) return;
+    clearReading();
+    speech.cancel();
+  }
+
+  function wireReading(button, label, getPlan) {
+    if (!button) return;
+    button.onclick = () => {
+      const wasReading = reading?.button === button;
+      clearReading();
+      speech.cancel();
+      if (wasReading) return;
+
+      const plan = getPlan();
+      if (!plan.length) return;
+      const playback = { button, label, utterance: null };
+      reading = playback;
+      button.textContent = '⏹ 停下';
+      window.addEventListener('hashchange', stopReading);
+      window.addEventListener('pagehide', stopReading);
+
+      const speakNext = (index) => {
+        if (reading !== playback) return;
+        const part = plan[index];
+        if (!part) {
+          clearReading();
+          return;
+        }
+        const utterance = new window.SpeechSynthesisUtterance(part.text);
+        playback.utterance = utterance;
+        utterance.lang = part.lang;
+        utterance.rate = part.lang === 'en-US' ? 0.85 : 0.95;
+        utterance.pitch = 1;
+        const lang = part.lang.toLowerCase();
+        const voice = localVoices.find((item) => item.lang.toLowerCase() === lang)
+          || localVoices.find((item) => item.default);
+        if (voice) utterance.voice = voice;
+        utterance.onend = () => speakNext(index + 1);
+        utterance.onerror = () => {
+          if (reading === playback) stopReading();
+        };
+        speech.speak(utterance);
+      };
+      speakNext(0);
+    };
+  }
 
   function paint() {
+    stopReading();
     if (cursor >= steps.length) return finish();
     const step = steps[cursor];
     if (step.kind === 'flash') return paintFlash(step);
@@ -232,6 +307,7 @@ export function renderQuiz(app, root) {
         <section class="card">
           <div class="q-topic">${esc(topic.chapter || '')}${topic.name ? ' · ' + esc(topic.name) : ''}${step.confirm ? ' · 基础确认' : ''}${step.origin === 'backtrack' ? ' · 前置补学' : ''}</div>
           <div class="q-prompt">${esc(q.prompt)}</div>
+          ${readButton('read-prompt', READ_PROMPT)}
           <div id="answer-area"></div>
           <div id="feedback"></div>
           <div style="margin-top:14px">
@@ -247,6 +323,8 @@ export function renderQuiz(app, root) {
     mountDraft(root, q.id);
     startTimer();
     wirePrev(root);
+    wireReading(root.querySelector('#read-prompt'), READ_PROMPT,
+      () => buildSpeakPlan(q, topic, hintShown.get(q.id) || 0));
 
     const area = root.querySelector('#answer-area');
     // 回看：按当时作答把作答区锁死，直接出讲解，不走判分
@@ -282,6 +360,7 @@ export function renderQuiz(app, root) {
     let myAnswer = '';
 
     const handle = (value) => {
+      stopReading();
       myAnswer = Array.isArray(value) ? value.join('，') : String(value ?? '');
       const result = judge(q, value);
       if (result === null) return paintSelfCheck(step, q, topic, myAnswer);
@@ -374,7 +453,7 @@ export function renderQuiz(app, root) {
       parts.push(`<p style="margin-top:8px"><b>④ 干扰项为什么不对：</b></p><ul class="explain-steps">${items}</ul>`);
     }
     parts.push('<p style="margin-top:8px"><b>⑤ 换个问法再测一题：</b>同一考点的变式题会出现在下一关或错题回炉里，换个问法做对了才算真懂。</p>');
-    return parts.join('');
+    return readButton('read-explanation', READ_EXPLANATION) + parts.join('');
   }
 
   /** 错题还差几次消灭：连续答对 2 次移出，返回剩余次数 */
@@ -527,6 +606,8 @@ export function renderQuiz(app, root) {
     if (!reviewOnly) step.review = { isCorrect, myAnswer };
     const fb = root.querySelector('#feedback');
     const area = root.querySelector('#answer-area');
+    const wireExplanationReading = () => wireReading(fb.querySelector('#read-explanation'), READ_EXPLANATION,
+      () => buildSpeakPlan(q, topic, 0, { isCorrect, myAnswer }));
     // 锁住作答区：正确答案标绿打✓，自己选错的标红打✕
     // （旧版只标绿，学生回头看不出自己错在哪；.choice.wrong 样式早已存在，只是一直没用上）
     area.querySelectorAll('button').forEach((b) => {
@@ -573,6 +654,7 @@ export function renderQuiz(app, root) {
           </div>
         </div>`;
       fb.querySelector('#next').onclick = () => { if (!reviewOnly && step.origin === 'backtrack') backtrackCount += 1; cursor += 1; paint(); };
+      wireExplanationReading();
       wirePrev(fb);
       wireTeacher(fb.querySelector('#ask-teacher'), fb.querySelector('#teacher-box'), q, topic, myAnswer);
       vib(8);
@@ -637,6 +719,7 @@ export function renderQuiz(app, root) {
         </div>
       </div>`;
     fb.querySelector('#next').onclick = () => { cursor += 1; paint(); };
+    wireExplanationReading();
     wirePrev(fb);
     if (variant) {
       fb.querySelector('#variant').onclick = () => {
@@ -720,6 +803,7 @@ export function renderQuiz(app, root) {
 
   /** ---------- 结束 ---------- */
   function finish() {
+    stopReading();
     if (finished) return;
     finished = true;
     stopTimer();
@@ -771,6 +855,7 @@ export function renderQuiz(app, root) {
   }
 
   function quit() {
+    stopReading();
     if (answered > 0 && !confirm(`现在退出，今天做的 ${answered} 道题会保留并计入今日，但不算打卡。确定吗？`)) return;
     flushMinutes();
     stopTimer();

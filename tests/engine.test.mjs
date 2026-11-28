@@ -4,6 +4,86 @@ import { judgeNumeric, judgeChoice, judgeShort, judge, inputCount } from '../src
 import { diagnose, buildHardIndex, pickConfirmQuestion } from '../src/engine/backtrack.js';
 import { recordAnswer, buildSession, pickFocusTopic, groupByTopic, completeSession, markAnsweredOnce, weekStats, addDailyMinutes } from '../src/engine/scheduler.js';
 import { dayKey, addDays } from '../src/util.js';
+import { buildSpeakPlan, detectLang, splitUtterances } from '../src/engine/readaloud.js';
+
+test('朗读按中文和英文切换语言', () => {
+  assert.equal(detectLang('选出正确答案'), 'zh-CN');
+  assert.equal(detectLang('Choose the correct answer.'), 'en-US');
+  assert.deepEqual(buildSpeakPlan({ prompt: '请读这句：I like English.' }), [
+    { lang: 'zh-CN', text: '请读这句：' },
+    { lang: 'en-US', text: 'I like English.' },
+  ]);
+});
+
+test('朗读按句分段，保留小数点和英文缩写', () => {
+  assert.deepEqual(splitUtterances(' 先看题；再作答！ Is Dr. Lee in the U.S. today? It costs 3.14, e.g. at this shop.  '), [
+    '先看题；', '再作答！', 'Is Dr. Lee in the U.S. today?', 'It costs 3.14, e.g. at this shop.',
+  ]);
+});
+
+test('长句分段约为 200 字，英文单词完整保留', () => {
+  const english = Array(47).fill('after-school').join(' ') + '.';
+  const englishChunks = splitUtterances(english);
+  assert.ok(englishChunks.length > 1);
+  assert.ok(englishChunks.every((chunk) => chunk.length <= 200));
+  assert.equal(englishChunks.join(' '), english);
+  const chinese = '先看题干'.repeat(100) + '。';
+  const chineseChunks = splitUtterances(chinese);
+  assert.ok(chineseChunks.every((chunk) => chunk && chunk.length <= 200));
+  assert.equal(chineseChunks.join(''), chinese);
+});
+
+const readAloudQuestion = {
+  type: 'choice',
+  prompt: 'Choose the correct word.',
+  choices: [
+    { key: 'D', text: 'done' }, { key: 'B', text: 'did' },
+    { key: 'A', text: 'do' }, { key: 'C', text: 'doing' },
+  ],
+  answer: 'B',
+  explanation: 'Single conclusion.',
+  steps: ['First step.', 'Second step.'],
+  whyWrong: { A: 'Reason one.', B: 'Correct choice.', C: 'Reason three.', D: 'Reason four.' },
+  hint1: 'Open hint.',
+  hint2: 'Closed hint.',
+  hint3: 'Hidden hint.',
+  variant: '换个问法再测一题',
+  score: '得分',
+  button: '下一题',
+};
+
+test('读题按选项顺序朗读，只介绍选项和已展开的提示', () => {
+  const texts = (q, shownHints) => buildSpeakPlan(q, {}, shownHints).map(({ text }) => text);
+  const expected = ['Choose the correct word.', 'A do', 'B did', 'C doing', 'D done'];
+  assert.deepEqual(texts(readAloudQuestion, 0), expected);
+  assert.deepEqual(texts(readAloudQuestion, 1), [...expected, 'Open hint.']);
+  assert.deepEqual(texts({ ...readAloudQuestion, answer: '答案字段不能读取' }, 1), [...expected, 'Open hint.']);
+  assert.deepEqual(texts({ ...readAloudQuestion, type: 'short' }, 0), [expected[0]]);
+  const { answer, explanation, steps, whyWrong, ...promptFields } = readAloudQuestion;
+  for (const field of ['answer', 'explanation', 'steps', 'whyWrong']) {
+    Object.defineProperty(promptFields, field, { get() { assert.fail(`读题访问了 ${field}`); } });
+  }
+  assert.deepEqual(texts(promptFields, 0), expected);
+});
+
+test('读讲解按结论、分步、错因、干扰项顺序，答对略过错因', () => {
+  const texts = (isCorrect, myAnswer) => buildSpeakPlan(readAloudQuestion, {}, 0, { isCorrect, myAnswer })
+    .map(({ text }) => text);
+  const beginning = ['Single conclusion.', 'First step.', 'Second step.'];
+  const distractors = ['A：Reason one.', 'C：Reason three.', 'D：Reason four.'];
+  assert.deepEqual(texts(false, 'D'), [
+    ...beginning, '你错在哪：你选了', 'D「done」，', '正确答案是', 'B「did」。', ...distractors,
+  ]);
+  assert.deepEqual(texts(true, 'B'), [...beginning, ...distractors]);
+});
+
+test('空讲解以及缺少分步或干扰项时不生成空句', () => {
+  const result = { isCorrect: true, myAnswer: 'B' };
+  const q = { type: 'choice', choices: readAloudQuestion.choices, answer: 'B', explanation: '  ' };
+  assert.deepEqual(buildSpeakPlan(q, {}, 0, result), []);
+  assert.deepEqual(buildSpeakPlan({ ...q, steps: ['', null, '有效步骤。'] }, {}, 0, result),
+    [{ lang: 'zh-CN', text: '有效步骤。' }]);
+});
 
 test('数值判分：分数、小数、百分数互通', () => {
   assert.equal(judgeNumeric('3/4', ['0.75']), true);
